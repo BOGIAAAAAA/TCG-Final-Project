@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <time.h>
+#include <stdint.h> // 為了 uint64_t
 
 int main() {
     // 1. 連接現有的 Shared Memory (0 = 只讀取，不創建)
@@ -30,8 +31,9 @@ int main() {
         printf(" System Time        : %s\n", time_buf);
         printf("----------------------------------------\n");
         // 這些數據來自 Shared Memory，證明 IPC 運作中
-        printf(" Active Connections : %d\n", stats->total_connections); 
-        printf(" Total Packets Recv : %d\n", stats->total_packets);
+        // 使用 %lu 來對應 uint64_t (在某些 64bit 系統上可能需要 %llu，若報錯請改用 %llu)
+        printf(" Active Connections : %lu\n", (unsigned long)stats->total_connections); 
+        printf(" Total Packets Recv : %lu\n", (unsigned long)stats->total_packets);
         printf("========================================\n");
         printf(" [Press Ctrl+C to exit monitor]\n");
         
