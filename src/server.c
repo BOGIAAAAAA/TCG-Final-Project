@@ -10,6 +10,23 @@
 #include <sys/wait.h>
 #include <stdarg.h>
 #include <time.h>
+#include <fcntl.h>   // For shm constants
+#include <sys/mman.h> // For shm_unlink
+
+/* --- Logging Helper --- */
+static void log_info(const char *fmt, ...) {
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    char buf[32];
+    strftime(buf, sizeof(buf), "%H:%M:%S", tm);
+    
+    fprintf(stderr, "[%s] [INFO] ", buf); // 自動帶上時間與等級
+    
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+}
 
 /* forward declarations */
 static void on_sigint(int);
@@ -514,6 +531,18 @@ int main(int argc, char **argv) {
     }
 
     close(lfd);
-    fprintf(stderr, "[server] shutdown\n");
+    log_info("[server] shutdown initiated\n");
+
+    // --- Cleanup Shared Memory ---
+    
+    // Unlink stats shared memory (PROTO_MAGIC_SHM defined in proto.h)
+    shm_unlink(PROTO_MAGIC_SHM); 
+
+    // Unlink session store shared memory (STORE_MAGIC_SHM defined in ipc.h)
+    shm_unlink(STORE_MAGIC_SHM);
+    
+    log_info("Shared memory unlinked\n");
+
+    //fprintf(stderr, "[server] shutdown\n");
     return 0;
 }

@@ -5,8 +5,7 @@ LDFLAGS=-pthread -lrt
 COMMON_OBJ=src/common/proto.o src/common/net.o src/common/ipc.o
 COMMON_LIB=libcommon.a
 
-all: server client client_app client_gui monitor
-
+all: server client client_gui
 
 $(COMMON_LIB): $(COMMON_OBJ)
 	ar rcs $@ $^
@@ -21,8 +20,6 @@ client_gui: src/client_gui.o $(COMMON_LIB)
 	$(CC) $(CFLAGS) -o $@ src/client_gui.o $(COMMON_LIB) \
 	    -lraylib -lm -ldl -lpthread -lrt -lX11
 
-monitor: src/monitor.c $(COMMON_LIB)
-	$(CC) $(CFLAGS) -o $@ src/monitor.c $(COMMON_LIB) $(LDFLAGS)
 
 clean:
 	rm -f server client client_gui src/*.o src/common/*.o $(COMMON_LIB)
