@@ -8,6 +8,12 @@ enum opcode_t {
     OP_LOGIN_REQ  = 0x0001,
     OP_LOGIN_RESP = 0x8001,
 
+    OP_PING       = 0x0002,   // client->server (no payload)
+    OP_PONG       = 0x8002,   // server->client (no payload)
+
+    OP_RESUME_REQ = 0x0003,   // client->server (payload: resume_req_t)
+    OP_RESUME_RESP= 0x8003,   // server->client (payload: resume_resp_t)
+
     OP_PLAY_CARD  = 0x0101,   // client->server (payload: play_req_t)
     OP_END_TURN   = 0x0102,   // client->server (no payload)
 
@@ -28,6 +34,17 @@ typedef struct {
 typedef struct {
     int32_t ok;        // 1=ok, 0=fail
 } login_resp_t;
+
+#pragma pack(push, 1)
+typedef struct {
+    uint64_t session_id;
+} resume_req_t;
+
+typedef struct {
+    int32_t ok;         // 1 ok, 0 fail
+    uint64_t session_id;
+} resume_resp_t;
+#pragma pack(pop)
 
 /* ---------------------------
  *  Game Protocol v2 (MVP+)
@@ -70,6 +87,12 @@ typedef struct {
 } play_req_t;
 #pragma pack(pop)
 
+typedef enum {
+    PHASE_DRAW = 0,
+    PHASE_MAIN = 1,
+    PHASE_END  = 2,
+} phase_t;
+
 // state includes resources + statuses + ring-buffer logs
 #define LOG_LINES 6
 #define LOG_LEN   64
@@ -80,6 +103,7 @@ typedef struct {
     int16_t ai_hp;     // AI HP
 
     uint8_t turn;      // 0=player, 1=ai
+    uint8_t phase;     // 0=DRAW, 1=MAIN, 2=END
     uint8_t game_over; // 0/1
     uint8_t winner;    // 0=none, 1=player, 2=ai
 
