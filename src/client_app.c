@@ -49,7 +49,7 @@ static void draw_ui(const state_t *st, const hand_t *hand) {
     mvprintw(10, 2, "Hand:");
     int n = (hand->n > 8) ? 8 : hand->n;
     for (int i = 0; i < n; i++) {
-        mvprintw(11 + i, 4, "%d) CardID=%u  DMG=%u", i + 1, hand->card_id[i], hand->dmg[i]);
+        mvprintw(11 + i, 4, "%d) CardID=%u  Value=%d", i + 1, hand->cards[i].id, hand->cards[i].value);
     }
 
     mvprintw(20, 2, "Action: ");
@@ -108,9 +108,8 @@ int run_app_mode(const char *host, uint16_t port) {
             int idx = ch - '1';
             if (idx < 0 || idx >= (int)hand.n) continue;
 
-            play_card_t pc;
-            pc.card_id = hand.card_id[idx];
-            pc.dmg = hand.dmg[idx];
+            play_req_t pc;
+            pc.hand_idx = (uint8_t)idx;
 
             if (proto_send(fd, OP_PLAY_CARD, &pc, sizeof(pc)) != 0) break;
             if (recv_until(fd, &st, &hand) != 0) break;

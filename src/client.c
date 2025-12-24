@@ -54,7 +54,7 @@ static void* worker(void *p) {
 
     // play a few rounds: PLAY_CARD (dmg=5) + END_TURN
     for (int i = 0; i < a->rounds; i++) {
-        play_card_t pc = { .card_id = 1, .dmg = 5 };
+        play_req_t pc = { .hand_idx = 0 };
 
         t0 = now_ns();
         if (proto_send(fd, OP_PLAY_CARD, &pc, sizeof(pc)) != 0) break;

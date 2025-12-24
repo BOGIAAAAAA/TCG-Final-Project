@@ -24,7 +24,7 @@ static shared_t g_sh;
 
 static int recv_until(int fd, state_t *st, hand_t *hand) {
     int got_state = 0, got_hand = 0;
-    uint8_t buf[2048];
+    uint8_t buf[4096];
     uint16_t op;
     uint32_t plen;
 
@@ -37,6 +37,9 @@ static int recv_until(int fd, state_t *st, hand_t *hand) {
         } else if (op == OP_HAND && plen == sizeof(hand_t)) {
             memcpy(hand, buf, sizeof(hand_t));
             got_hand = 1;
+        } else if (op == OP_ERROR && plen == sizeof(error_t)) {
+            // optional: could display error
+            // ignore here; UI will show state soon anyway
         } else {
             // ignore others
         }
@@ -91,7 +94,6 @@ static void* net_thread(void *p) {
     g_sh.game_over = st.game_over ? 1 : 0;
     pthread_mutex_unlock(&g_mu);
 
-    // keep receiving updates after actions (each action expects STATE+HAND)
     while (1) {
         if (recv_until(fd, &st, &hand) != 0) break;
 
@@ -116,6 +118,36 @@ static bool PointInRect(Vector2 p, Rectangle r) {
             p.y >= r.y && p.y <= r.y + r.height);
 }
 
+static const char* card_type_name(uint8_t t) {
+    switch (t) {
+        case CARD_ATTACK: return "ATK";
+        case CARD_HEAL:   return "HEAL";
+        case CARD_SHIELD: return "SHD";
+        case CARD_BUFF:   return "BUFF";
+        case CARD_POISON: return "PSN";
+        default: return "UNK";
+    }
+}
+
+static const char* winner_name(uint8_t w) {
+    if (w == 1) return "PLAYER";
+    if (w == 2) return "AI";
+    return "NONE";
+}
+
+static void draw_logs(const state_t *st, int x, int y) {
+    DrawText("Battle Log:", x, y, 20, DARKGRAY);
+
+    // show in chronological order (oldest -> newest)
+    // Since log_head points to next write, oldest is log_head.
+    for (int i = 0; i < LOG_LINES; i++) {
+        int idx = (st->log_head + i) % LOG_LINES;
+        const char *line = st->logs[idx];
+        if (line[0] == '\0') line = "-";
+        DrawText(line, x, y + 26 + i * 22, 18, GRAY);
+    }
+}
+
 int main(int argc, char **argv) {
     const char *host = "127.0.0.1";
     uint16_t port = 9000;
@@ -130,6 +162,10 @@ int main(int argc, char **argv) {
 
     const int W = 900, H = 600;
     InitWindow(W, H, "Mini TCG - GUI Client (raylib)");
+    if (!IsWindowReady()) {
+        fprintf(stderr, "ERROR: GUI init failed (OpenGL/GLX missing). Try software rendering.\n");
+        return 1;
+    }
     SetTargetFPS(60);
 
     Rectangle cardRect[3] = {
@@ -149,7 +185,7 @@ int main(int argc, char **argv) {
         BeginDrawing();
         ClearBackground(RAYWHITE);
 
-        DrawText("Mini TCG (raylib GUI)", 30, 20, 28, DARKGRAY);
+        DrawText("Mini TCG (raylib GUI)  |  Click a card to play", 30, 20, 24, DARKGRAY);
 
         if (!sh.connected && !sh.has_state) {
             DrawText("Connecting...", 30, 80, 22, MAROON);
@@ -160,25 +196,40 @@ int main(int argc, char **argv) {
         // status panel
         char buf[256];
         if (sh.has_state) {
+            // HP
             snprintf(buf, sizeof(buf), "Player HP: %d", sh.st.p_hp);
-            DrawText(buf, 30, 80, 22, BLACK);
+            DrawText(buf, 30, 70, 22, BLACK);
             snprintf(buf, sizeof(buf), "AI HP: %d", sh.st.ai_hp);
-            DrawText(buf, 30, 110, 22, BLACK);
+            DrawText(buf, 30, 100, 22, BLACK);
 
+            // Mana + statuses
+            snprintf(buf, sizeof(buf), "Mana: %u / %u", (unsigned)sh.st.mana, (unsigned)sh.st.max_mana);
+            DrawText(buf, 30, 135, 22, BLACK);
+
+            snprintf(buf, sizeof(buf), "P Shield: %d   P Buff: %d   P Poison: %u",
+                     sh.st.p_shield, sh.st.p_buff, (unsigned)sh.st.p_poison);
+            DrawText(buf, 30, 170, 20, DARKGRAY);
+
+            snprintf(buf, sizeof(buf), "AI Shield: %d  AI Buff: %d  AI Poison: %u",
+                     sh.st.ai_shield, sh.st.ai_buff, (unsigned)sh.st.ai_poison);
+            DrawText(buf, 30, 195, 20, DARKGRAY);
+
+            // Turn
             const char *turn = (sh.st.turn == 0) ? "PLAYER" : "AI";
             snprintf(buf, sizeof(buf), "Turn: %s", turn);
-            DrawText(buf, 30, 150, 22, BLACK);
+            DrawText(buf, 30, 230, 22, BLACK);
 
+            // Game over
             snprintf(buf, sizeof(buf), "Game Over: %s", sh.st.game_over ? "YES" : "NO");
-            DrawText(buf, 30, 180, 22, BLACK);
+            DrawText(buf, 30, 260, 22, BLACK);
 
             if (sh.st.game_over) {
-                const char *w = "NONE";
-                if (sh.st.winner == 1) w = "PLAYER";
-                else if (sh.st.winner == 2) w = "AI";
-                snprintf(buf, sizeof(buf), "Winner: %s", w);
-                DrawText(buf, 30, 210, 22, MAROON);
+                snprintf(buf, sizeof(buf), "Winner: %s", winner_name(sh.st.winner));
+                DrawText(buf, 30, 292, 24, MAROON);
             }
+
+            // Logs
+            draw_logs(&sh.st, 520, 70);
         }
 
         // End Turn button
@@ -187,20 +238,31 @@ int main(int argc, char **argv) {
         DrawText("End Turn", (int)endBtn.x + 18, (int)endBtn.y + 15, 20, BLACK);
 
         // cards
-        DrawText("Hand (click a card to play):", 30, 380, 22, DARKGRAY);
+        DrawText("Hand:", 30, 380, 22, DARKGRAY);
 
         int n = sh.has_hand ? (sh.hand.n > 3 ? 3 : sh.hand.n) : 0;
         for (int i = 0; i < 3; i++) {
             DrawRectangleRec(cardRect[i], (i < n) ? BEIGE : LIGHTGRAY);
-            DrawRectangleLines((int)cardRect[i].x, (int)cardRect[i].y, (int)cardRect[i].width, (int)cardRect[i].height, GRAY);
+            DrawRectangleLines((int)cardRect[i].x, (int)cardRect[i].y,
+                               (int)cardRect[i].width, (int)cardRect[i].height, GRAY);
 
             if (i < n) {
+                const card_t *c = &sh.hand.cards[i];
+
                 snprintf(buf, sizeof(buf), "Card %d", i + 1);
                 DrawText(buf, (int)cardRect[i].x + 12, (int)cardRect[i].y + 12, 22, BLACK);
-                snprintf(buf, sizeof(buf), "ID: %u", sh.hand.card_id[i]);
-                DrawText(buf, (int)cardRect[i].x + 12, (int)cardRect[i].y + 48, 20, DARKGRAY);
-                snprintf(buf, sizeof(buf), "DMG: %u", sh.hand.dmg[i]);
-                DrawText(buf, (int)cardRect[i].x + 12, (int)cardRect[i].y + 76, 20, DARKGRAY);
+
+                snprintf(buf, sizeof(buf), "Type: %s", card_type_name(c->type));
+                DrawText(buf, (int)cardRect[i].x + 12, (int)cardRect[i].y + 44, 20, DARKGRAY);
+
+                snprintf(buf, sizeof(buf), "Cost: %u", (unsigned)c->cost);
+                DrawText(buf, (int)cardRect[i].x + 12, (int)cardRect[i].y + 70, 20, DARKGRAY);
+
+                snprintf(buf, sizeof(buf), "Value: %d", (int)c->value);
+                DrawText(buf, (int)cardRect[i].x + 12, (int)cardRect[i].y + 96, 20, DARKGRAY);
+
+                snprintf(buf, sizeof(buf), "ID: %u", (unsigned)c->id);
+                DrawText(buf, (int)cardRect[i].x + 12, (int)cardRect[i].y + 120, 18, GRAY);
             } else {
                 DrawText("(empty)", (int)cardRect[i].x + 12, (int)cardRect[i].y + 12, 20, GRAY);
             }
@@ -208,19 +270,22 @@ int main(int argc, char **argv) {
 
         // input handling
         Vector2 mp = GetMousePosition();
-        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && sh.connected && sh.has_state && sh.has_hand && !sh.st.game_over) {
-            // End turn
-            if (PointInRect(mp, endBtn) && na.fd_out >= 0) {
-                proto_send(na.fd_out, OP_END_TURN, NULL, 0);
-            } else {
-                // play card
-                for (int i = 0; i < n; i++) {
-                    if (PointInRect(mp, cardRect[i]) && na.fd_out >= 0) {
-                        play_card_t pc;
-                        pc.card_id = sh.hand.card_id[i];
-                        pc.dmg = sh.hand.dmg[i];
-                        proto_send(na.fd_out, OP_PLAY_CARD, &pc, sizeof(pc));
-                        break;
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) &&
+            sh.connected && sh.has_state && sh.has_hand && !sh.st.game_over) {
+
+            if (na.fd_out >= 0) {
+                // End turn
+                if (PointInRect(mp, endBtn)) {
+                    proto_send(na.fd_out, OP_END_TURN, NULL, 0);
+                } else {
+                    // play card by index
+                    for (int i = 0; i < n; i++) {
+                        if (PointInRect(mp, cardRect[i])) {
+                            play_req_t pr;
+                            pr.hand_idx = (uint8_t)i;
+                            proto_send(na.fd_out, OP_PLAY_CARD, &pr, sizeof(pr));
+                            break;
+                        }
                     }
                 }
             }
@@ -230,7 +295,6 @@ int main(int argc, char **argv) {
     }
 
     CloseWindow();
-    // net thread will exit when server closes or program ends; we can detach
     pthread_detach(nt);
     return 0;
 }
