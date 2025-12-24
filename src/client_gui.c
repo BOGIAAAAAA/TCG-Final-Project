@@ -341,6 +341,12 @@ static void DrawHPBar(int x, int y, int w, int h, int hp, int maxhp, int shield)
     }
 }
 
+static void DrawPanel(int x, int y, int w, int h) {
+    DrawRectangle(x + 4, y + 4, w, h, (Color){0, 0, 0, 80}); // Softer Drop Shadow
+    DrawRectangle(x, y, w, h, (Color){30, 30, 30, 180});      // Semi-transparent Body
+    DrawRectangleLinesEx((Rectangle){x, y, w, h}, 1, (Color){60, 60, 60, 150}); // Thinner Frame
+}
+
 int main(int argc, char **argv) {
     const char *host = "127.0.0.1";
     uint16_t port = 9000;
@@ -392,12 +398,18 @@ int main(int argc, char **argv) {
         TraceLog(LOG_WARNING, "Some card textures missing. Check src/assets/cards/*.png");
     }
 
+    // Spaced out cards (Gap 40px, Width 220)
+    // Center block of 3 cards: Total W = 220*3 + 40*2 = 660 + 80 = 740.
+    // Start X = (900 - 740)/2 = 80.
+    // X Positions: 80, 80+220+40=340, 340+220+40=600.
     Rectangle cardRect[3] = {
-        { 60,  420, 220, 140 },
+        { 80,  420, 220, 140 },
         { 340, 420, 220, 140 },
-        { 620, 420, 220, 140 }
+        { 600, 420, 220, 140 }
     };
-    Rectangle endBtn = { 740, 40, 130, 50 };
+    
+    // Top Right End Turn Button
+    Rectangle endBtn = { 900 - 140, 20, 120, 40 };
 
     while (!WindowShouldClose()) {
         // snapshot shared state
@@ -417,121 +429,140 @@ int main(int argc, char **argv) {
             continue;
         }
 
+        // Font Sizes
+        const int SZ_TITLE = 28;
+        const int SZ_HUD   = 20;
+        const int SZ_LOG   = 16;
+        const int SZ_CARD  = 18;
+
+        // --- LAYOUT CONSTANTS ---
+        const int P_X = 40;     // Player Left Align
+        const int AI_X = 540;   // AI Left Align
+        const int HP_Y = 80;    // HP Bar Y
+        const int BAR_W = 320;  // HP Bar Width
+        
         // status panel
         char buf[256];
         if (sh.has_state) {
-            // HP Bars
-            // Player
-            DrawHPBar(30, 90, 360, 20, sh.st.p_hp, 30, sh.st.p_shield);
+            // --- LIGHTWEIGHT HUD ---
             
-            // AI
-            DrawHPBar(520, 90, 360, 20, sh.st.ai_hp, 30, sh.st.ai_shield);
-
-            // Text info
-            snprintf(buf, sizeof(buf), "P HP %d  SHD %d  BUFF %d  PSN %u", 
-                sh.st.p_hp, sh.st.p_shield, sh.st.p_buff, (unsigned)sh.st.p_poison);
-            DrawTextEx(g_ui.font, buf, (Vector2){30, 60}, 20, 1, (Color){200,200,200,255});
-
-            snprintf(buf, sizeof(buf), "AI HP %d  SHD %d  BUFF %d  PSN %u", 
-                sh.st.ai_hp, sh.st.ai_shield, sh.st.ai_buff, (unsigned)sh.st.ai_poison);
-            DrawTextEx(g_ui.font, buf, (Vector2){520, 60}, 20, 1, (Color){200,200,200,255});
-
-            // Mana
-            snprintf(buf, sizeof(buf), "Mana: %u / %u", (unsigned)sh.st.mana, (unsigned)sh.st.max_mana);
-            DrawTextEx(g_ui.font, buf, (Vector2){30, 130}, 24, 1, SKYBLUE);
-
-
-            // Turn & Phase
-            const char *turn = (sh.st.turn == 0) ? "PLAYER" : "AI";
-            Color tc = (sh.st.turn == 0) ? GREEN : RED;
-            snprintf(buf, sizeof(buf), "[ %s ]  %s", turn, phase_name(sh.st.phase));
-            DrawTextEx(g_ui.font, buf, (Vector2){30, 270}, 24, 2, tc);
-
-            if (sh.st.game_over) {
-                snprintf(buf, sizeof(buf), "WINNER: %s", winner_name(sh.st.winner));
-                DrawTextEx(g_ui.font, buf, (Vector2){30, 310}, 32, 2, GOLD);
+            // Player Stats
+            DrawPanel(P_X - 10, HP_Y - 10, BAR_W + 20, 100); 
+            DrawTextEx(g_ui.font, "PLAYER", (Vector2){P_X, HP_Y}, SZ_HUD, 1, WHITE);
+            DrawHPBar(P_X, HP_Y + 25, BAR_W, 20, sh.st.p_hp, 30, sh.st.p_shield);
+            snprintf(buf, sizeof(buf), "HP %d/%d  SHD %d  Mana %d/%d", 
+                sh.st.p_hp, 30, sh.st.p_shield, sh.st.mana, sh.st.max_mana);
+            DrawTextEx(g_ui.font, buf, (Vector2){P_X, HP_Y + 50}, SZ_HUD, 1, GREEN);
+            if (sh.st.p_buff > 0 || sh.st.p_poison > 0) {
+                snprintf(buf, sizeof(buf), "Buff %d  Psn %u", sh.st.p_buff, (unsigned)sh.st.p_poison);
+                DrawTextEx(g_ui.font, buf, (Vector2){P_X, HP_Y + 74}, SZ_LOG, 1, LIGHTGRAY);
             }
 
-            draw_logs(&sh.st, 520, 70);
-        }
+            // AI Stats
+            DrawPanel(AI_X - 10, HP_Y - 10, BAR_W + 20, 100); 
+            DrawTextEx(g_ui.font, "OPPONENT", (Vector2){AI_X, HP_Y}, SZ_HUD, 1, WHITE);
+            DrawHPBar(AI_X, HP_Y + 25, BAR_W, 20, sh.st.ai_hp, 30, sh.st.ai_shield);
+            snprintf(buf, sizeof(buf), "HP %d/%d  SHD %d  PSN %u", 
+                sh.st.ai_hp, 30, sh.st.ai_shield, (unsigned)sh.st.ai_poison);
+            DrawTextEx(g_ui.font, buf, (Vector2){AI_X, HP_Y + 50}, SZ_HUD, 1, RED);
+            if (sh.st.ai_buff > 0) {
+                snprintf(buf, sizeof(buf), "Buff %d", sh.st.ai_buff);
+                DrawTextEx(g_ui.font, buf, (Vector2){AI_X, HP_Y + 74}, SZ_LOG, 1, LIGHTGRAY);
+            }
 
-        // End Turn button
-        Color btnColor = (sh.st.turn == 0) ? SKYBLUE : GRAY;
-        DrawRectangleRec(endBtn, btnColor);
-        DrawRectangleLines((int)endBtn.x, (int)endBtn.y, (int)endBtn.width, (int)endBtn.height, WHITE);
-        DrawTextEx(g_ui.font, "End Turn", (Vector2){endBtn.x + 20, endBtn.y + 12}, 20, 1, BLACK);
+            // Battle Log (Low profile)
+            DrawPanel(AI_X - 10, 210, 350, 150);
+            DrawTextEx(g_ui.font, "Battle Log:", (Vector2){AI_X, 215}, SZ_LOG, 1, GRAY);
+            int ly = 235;
+            for (int i = 0; i < 6; i++) {
+                const char *line = sh.st.logs[(sh.st.log_head + i) % 6];
+                if (line[0] == '\0') line = "-";
+                DrawTextEx(g_ui.font, line, (Vector2){AI_X, (float)ly}, SZ_LOG, 1, LIGHTGRAY);
+                ly += 18;
+            }
 
-        // Hand
-        DrawTextEx(g_ui.font, "Hand:", (Vector2){30, 390}, 22, 1, LIGHTGRAY);
+            // --- END TURN BUTTON ---
+            Color btnColor = (sh.st.turn == 0) ? SKYBLUE : GRAY;
+            DrawPanel(endBtn.x, endBtn.y, endBtn.width, endBtn.height); 
+            DrawRectangleRec(endBtn, btnColor); 
+            DrawRectangleLinesEx(endBtn, 2, WHITE);
+            DrawTextEx(g_ui.font, "End Turn", (Vector2){endBtn.x + 15, endBtn.y + 10}, SZ_HUD, 1, BLACK);
 
-        int n = sh.has_hand ? (sh.hand.n > 3 ? 3 : sh.hand.n) : 0;
-        for (int i = 0; i < 3; i++) {
-            Rectangle r = cardRect[i];
+            // --- HAND & FOCUS STATES ---
+            DrawTextEx(g_ui.font, "Your Hand:", (Vector2){80, 390}, SZ_HUD, 1, LIGHTGRAY);
+
+            int n = sh.has_hand ? (sh.hand.n > 3 ? 3 : sh.hand.n) : 0;
+            for (int i = 0; i < 3; i++) {
+                Rectangle r = cardRect[i];
+                DrawPanel((int)r.x, (int)r.y, (int)r.width, (int)r.height);
+
+                if (i < n) {
+                    const card_t *c = &sh.hand.cards[i];
+                    Texture2D tex = tex_for_card(c->type);
+                    DrawTexturePro(tex, (Rectangle){0,0,tex.width,tex.height}, 
+                                  (Rectangle){r.x+2, r.y+2, r.width-4, r.height-4}, 
+                                  (Vector2){0,0}, 0, WHITE);
+                    
+                    DrawRectangle(r.x+2, r.y+2, r.width-4, 30, (Color){0,0,0,180}); 
+                    snprintf(buf, sizeof(buf), "%s (%d)", card_type_name(c->type), c->value);
+                    DrawTextEx(g_ui.font, buf, (Vector2){r.x+10, r.y+8}, SZ_CARD, 1, WHITE);
+                    
+                    DrawRectangle(r.x+2, r.y + r.height - 32, r.width-4, 30, (Color){0,0,0,180});
+                    snprintf(buf, sizeof(buf), "Cost: %u", c->cost);
+                    DrawTextEx(g_ui.font, buf, (Vector2){r.x+10, r.y+r.height-25}, SZ_CARD, 1, GOLD);
+                    
+                    // IF AI TURN (Focused away) -> Dim Hand
+                    if (sh.st.turn != 0) {
+                        DrawRectangleRec(r, (Color){0, 0, 0, 150}); // Dim overlay
+                    }
+                }
+            }
             
-            // Draw Card Background
-            DrawRectangleRec(r, (i < n) ? RAYWHITE : DARKGRAY);
-            DrawRectangleLinesEx(r, 2, GRAY);
+            // --- FOCUS OVERLAYS ---
+            
+            // AI TURN BANNER
+            if (sh.st.turn != 0 && !sh.st.game_over) {
+                 // Draw banner in center
+                 const char *aitext = "AI TURN";
+                 int w = MeasureText(aitext, 40);
+                 DrawRectangle(0, H/2 - 40, W, 80, (Color){0, 0, 0, 200});
+                 DrawTextEx(g_ui.font, aitext, (Vector2){(W-w)/2, H/2 - 20}, 40, 2, RED);
+            }
 
-            if (i < n) {
-                const card_t *c = &sh.hand.cards[i];
-                
-                // Texture
-                Texture2D tex = tex_for_card(c->type);
-                DrawTexturePro(tex, (Rectangle){0,0,tex.width,tex.height}, 
-                              (Rectangle){r.x+10, r.y+30, r.width-20, r.height-40}, 
-                              (Vector2){0,0}, 0, WHITE);
-                
-                // Text overlay
-                snprintf(buf, sizeof(buf), "%s (%d)", card_type_name(c->type), c->value);
-                DrawTextEx(g_ui.font, buf, (Vector2){r.x+10, r.y+5}, 18, 1, BLACK);
-                
-                snprintf(buf, sizeof(buf), "Cost: %u", c->cost);
-                DrawTextEx(g_ui.font, buf, (Vector2){r.x+10, r.y+r.height-25}, 18, 1, BLACK);
+            // GAME OVER - Full screen mask
+            if (sh.st.game_over) {
+                DrawRectangle(0, 0, W, H, (Color){0, 0, 0, 240}); // Full screen blackout
+                snprintf(buf, sizeof(buf), "GAME OVER - WINNER: %s", winner_name(sh.st.winner));
+                DrawTextEx(g_ui.font, buf, (Vector2){250, 270}, 32, 2, GOLD);
             }
         }
         
-        // Floating Text Animation (if active)
-        // (Placeholder logic: in real app, we'd trigger this on events)
-        if (g_float.active) {
-            g_float.t += GetFrameTime();
-            if (g_float.t >= g_float.dur) g_float.active = 0;
-            else {
-                float alpha = 1.0f - (g_float.t / g_float.dur);
-                Vector2 pos = g_float.pos;
-                pos.y -= g_float.t * 30.0f; // float up
-                Color col = RED;
-                col.a = (unsigned char)(alpha * 255);
-                DrawTextEx(g_ui.font, g_float.text, pos, 32, 2, col);
-            }
-        }
-
-        // Fly Animation
+        // Animations
         float dt = GetFrameTime();
         if (g_anim.active) {
             g_anim.t += dt / g_anim.dur;
             if (g_anim.t >= 1.0f) { g_anim.t = 1.0f; g_anim.active = 0; }
+            g_anim.to = (Vector2){ AI_X + 50, HP_Y + 10 }; 
             Vector2 pos = v2_lerp(g_anim.from, g_anim.to, g_anim.t);
-
-            // draw a tiny "card" sprite
-            Rectangle r = { pos.x - 30, pos.y - 20, 60, 40 };
-            DrawRectangleRec(r, (Color){250, 240, 200, 255});
-            DrawRectangleLinesEx(r, 2, (Color){30,30,30,255});
-            DrawTextEx(g_ui.font, g_anim.text, (Vector2){r.x + 8, r.y + 10}, 16, 1, (Color){30,30,30,255});
+            DrawPanel((int)pos.x - 30, (int)pos.y - 20, 60, 40);
+            DrawRectangle(pos.x - 28, pos.y - 18, 56, 36, (Color){250, 240, 200, 255});
+            DrawTextEx(g_ui.font, g_anim.text, (Vector2){pos.x - 22, pos.y - 10}, 16, 1, BLACK);
         }
 
         // input handling
         Vector2 mp = GetMousePosition();
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) &&
-            sh.connected && sh.has_state && sh.has_hand && !sh.st.game_over) {
+            sh.connected && sh.has_state && sh.has_hand && !sh.st.game_over && sh.st.turn == 0) {
 
             if (na.fd_out >= 0) {
                 // End turn
-                if (PointInRect(mp, endBtn)) {
+                if (CheckCollisionPointRec(mp, endBtn)) {
                     proto_send(na.fd_out, OP_END_TURN, NULL, 0);
                 } else {
                     // play card by index
+                    int n = sh.has_hand ? (sh.hand.n > 3 ? 3 : sh.hand.n) : 0;
                     for (int i = 0; i < n; i++) {
-                        if (PointInRect(mp, cardRect[i])) {
+                        if (CheckCollisionPointRec(mp, cardRect[i])) {
                             play_req_t pr;
                             pr.hand_idx = (uint8_t)i;
                             
@@ -540,7 +571,7 @@ int main(int argc, char **argv) {
                             g_anim.t = 0.0f;
                             g_anim.dur = 0.30f;
                             g_anim.from = (Vector2){ cardRect[i].x + cardRect[i].width*0.5f, cardRect[i].y + cardRect[i].height*0.5f };
-                            g_anim.to   = (Vector2){ 700, 110 }; // AI HP bar area
+                            g_anim.to   = (Vector2){ AI_X + 50, HP_Y + 10 }; 
                             snprintf(g_anim.text, sizeof(g_anim.text), "PLAY");
 
                             proto_send(na.fd_out, OP_PLAY_CARD, &pr, sizeof(pr));
