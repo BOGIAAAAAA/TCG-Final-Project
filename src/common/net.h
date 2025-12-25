@@ -12,6 +12,8 @@ typedef struct {
     SSL_CTX *ctx;  // context ref (optional to store here, but good for cleanup)
 } connection_t;
 
+int net_set_timeout(int fd, int seconds);
+
 // Connection Helpers
 void conn_init(connection_t *c, int fd, SSL *ssl);
 void conn_close(connection_t *c);

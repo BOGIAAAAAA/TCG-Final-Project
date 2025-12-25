@@ -33,6 +33,9 @@ static void* worker(void *p) {
         return NULL;
     }
     
+    // Set 3 seconds timeout for handshake/recv
+    net_set_timeout(fd, 3);
+
     // SSL Handshake
     SSL *ssl = SSL_new(a->ctx);
     SSL_set_fd(ssl, fd);

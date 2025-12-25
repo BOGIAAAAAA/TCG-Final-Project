@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <sys/time.h>
 
 void conn_init(connection_t *c, int fd, SSL *ssl) {
     if (c) {
@@ -142,6 +143,16 @@ int tcp_connect(const char *host, uint16_t port) {
     }
     freeaddrinfo(res);
     return fd;
+}
+
+int net_set_timeout(int fd, int seconds) {
+    struct timeval tv;
+    tv.tv_sec = seconds;
+    tv.tv_usec = 0;
+    
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) return -1;
+    if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) return -1;
+    return 0;
 }
 
 /* --- SSL Helpers --- */

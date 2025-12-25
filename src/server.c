@@ -469,6 +469,9 @@ int main(int argc, char **argv) {
             // child
             close(lfd);
             
+            // Set 5 seconds timeout for handshake/recv
+            net_set_timeout(cfd, 5);
+
             // SSL Handshake in Child
             SSL *ssl = SSL_new(ctx);
             SSL_set_fd(ssl, cfd);
