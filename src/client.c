@@ -1,4 +1,5 @@
 #include "common/net.h"
+#include <errno.h>
 #include "common/proto.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +14,9 @@ typedef struct {
     int rounds;
     long long *lat_ns_out; // store sum latency
     int idx;
+    /* han edit tls */
+    SSL_CTX *ctx;
+    /* han edit tls end */
 } th_arg_t;
 
 static long long now_ns(void) {
@@ -26,24 +30,66 @@ static void* worker(void *p) {
 
     int fd = tcp_connect(a->host, a->port);
     if (fd < 0) {
+        perror("[client] connect failed");
         a->lat_ns_out[a->idx] = -1;
         return NULL;
     }
 
+    /* han edit start */
+    // Set 3 seconds timeout
+    net_set_timeout(fd, 3);
+    /* han edit end */
+
+    /* han edit tls */
+    SSL *ssl = SSL_new(a->ctx);
+    SSL_set_fd(ssl, fd);
+    if (SSL_connect(ssl) <= 0) {
+        ERR_print_errors_fp(stderr);
+        SSL_free(ssl);
+        close(fd);
+        a->lat_ns_out[a->idx] = -1;
+        return NULL;
+    }
+    /* han edit tls end */
+
     // login
     long long t0 = now_ns();
-    if (proto_send(fd, OP_LOGIN_REQ, NULL, 0) != 0) { close(fd); a->lat_ns_out[a->idx] = -1; return NULL; }
+    /* han edit tls */
+    if (proto_send(fd, ssl, OP_LOGIN_REQ, NULL, 0) != 0) { 
+        SSL_shutdown(ssl); SSL_free(ssl); // simplified cleanup
+        close(fd); a->lat_ns_out[a->idx] = -1; return NULL; 
+    }
+    /* han edit tls end */
 
     uint8_t buf[1024];
     uint16_t op; uint32_t plen;
-    if (proto_recv(fd, &op, buf, sizeof(buf), &plen) != 0) { close(fd); a->lat_ns_out[a->idx] = -1; return NULL; }
+    /* han edit tls */
+    if (proto_recv(fd, ssl, &op, buf, sizeof(buf), &plen) != 0) {
+    /* han edit tls end */
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            fprintf(stderr, "[client] Receive timeout (waited > 3s)\n");
+        } else {
+            perror("[client] proto_recv login");
+        }
+        /* han edit tls */
+        SSL_shutdown(ssl); SSL_free(ssl);
+        /* han edit tls end */
+        close(fd);
+        a->lat_ns_out[a->idx] = -1;
+        return NULL;
+    }
     if (op == OP_STATE && plen == sizeof(state_t) && a->idx == 0) {
         state_t st;
         memcpy(&st, buf, sizeof(st));
         printf("[login] HP=%d AI=%d over=%u winner=%u\n", st.p_hp, st.ai_hp, st.game_over, st.winner);
     }
 
-    if (proto_recv(fd, &op, buf, sizeof(buf), &plen) != 0) { close(fd); a->lat_ns_out[a->idx] = -1; return NULL; }
+    /* han edit tls */
+    if (proto_recv(fd, ssl, &op, buf, sizeof(buf), &plen) != 0) { 
+        SSL_shutdown(ssl); SSL_free(ssl);
+        close(fd); a->lat_ns_out[a->idx] = -1; return NULL; 
+    }
+    /* han edit tls end */
     if (op == OP_STATE && plen == sizeof(state_t) && a->idx == 0) {
         state_t st;
         memcpy(&st, buf, sizeof(st));
@@ -54,11 +100,13 @@ static void* worker(void *p) {
 
     // play a few rounds: PLAY_CARD (dmg=5) + END_TURN
     for (int i = 0; i < a->rounds; i++) {
-        play_card_t pc = { .card_id = 1, .dmg = 5 };
+        play_req_t pc = { .hand_idx = 0 };
 
         t0 = now_ns();
-        if (proto_send(fd, OP_PLAY_CARD, &pc, sizeof(pc)) != 0) break;
-        if (proto_recv(fd, &op, buf, sizeof(buf), &plen) != 0) break;
+        /* han edit tls */
+        if (proto_send(fd, ssl, OP_PLAY_CARD, &pc, sizeof(pc)) != 0) break;
+        if (proto_recv(fd, ssl, &op, buf, sizeof(buf), &plen) != 0) break;
+        /* han edit tls end */
         if (op == OP_STATE && plen == sizeof(state_t) && a->idx == 0) {
             state_t st;
             memcpy(&st, buf, sizeof(st));
@@ -66,8 +114,10 @@ static void* worker(void *p) {
                    st.p_hp, st.ai_hp, st.game_over, st.winner);
             if (st.game_over) break;
         }
-        if (proto_send(fd, OP_END_TURN, NULL, 0) != 0) break;
-        if (proto_recv(fd, &op, buf, sizeof(buf), &plen) != 0) break;
+        /* han edit tls */
+        if (proto_send(fd, ssl, OP_END_TURN, NULL, 0) != 0) break;
+        if (proto_recv(fd, ssl, &op, buf, sizeof(buf), &plen) != 0) break;
+        /* han edit tls end */
         if (op == OP_STATE && plen == sizeof(state_t) && a->idx == 0) {
             state_t st;
             memcpy(&st, buf, sizeof(st));
@@ -114,8 +164,18 @@ int main(int argc, char **argv) {
     th_arg_t  *args = calloc((size_t)threads, sizeof(th_arg_t));
     long long *lats = calloc((size_t)threads, sizeof(long long));
 
+    /* han edit tls */
+    net_init_ssl();
+    // For client, we usually verify server cert. For self-signed test, we might skip verification or load CA.
+    // Simplification: just create client context, no strict verification logic added here for MVP test unless requested
+    SSL_CTX *ctx = net_create_context(0); // 0 = client
+    // net_configure_context(ctx, "client.crt", "client.key"); // Optional for client auth
+    /* han edit tls end */
+
     for (int i = 0; i < threads; i++) {
-        args[i] = (th_arg_t){ .host=host, .port=port, .rounds=rounds, .lat_ns_out=lats, .idx=i };
+        /* han edit tls */
+        args[i] = (th_arg_t){ .host=host, .port=port, .rounds=rounds, .lat_ns_out=lats, .idx=i, .ctx=ctx };
+        /* han edit tls end */
         pthread_create(&tids[i], NULL, worker, &args[i]);
     }
     for (int i = 0; i < threads; i++) pthread_join(tids[i], NULL);
@@ -139,5 +199,8 @@ int main(int argc, char **argv) {
     }
 
     free(tids); free(args); free(lats);
+    /* han edit tls */
+    SSL_CTX_free(ctx);
+    /* han edit tls end */
     return 0;
 }
