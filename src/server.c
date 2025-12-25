@@ -114,7 +114,9 @@ static void deal_hand(hand_t *h) {
     for (int i = 0; i < 3; i++) h->cards[i] = rand_card();
 }
 
-static int err_send(int fd, int32_t code, const char *msg) {
+/* han edit tls */
+static int err_send(int fd, SSL *ssl, int32_t code, const char *msg) {
+/* han edit tls end */
     error_t e;
     memset(&e, 0, sizeof(e));
     e.code = code;
@@ -122,8 +124,11 @@ static int err_send(int fd, int32_t code, const char *msg) {
         strncpy(e.msg, msg, sizeof(e.msg) - 1);
         e.msg[sizeof(e.msg) - 1] = '\0';
     }
-    return proto_send(fd, OP_ERROR, &e, sizeof(e));
+    /* han edit tls */
+    return proto_send(fd, ssl, OP_ERROR, &e, sizeof(e));
+    /* han edit tls end */
 }
+
 
 static int handle_play_card(state_t *st, hand_t *hand, int is_player, uint8_t idx) {
     if (idx >= hand->n) return -1;
@@ -296,7 +301,9 @@ static void process_ai_turn(state_t *st, hand_t *hand) {
     }
 }
 
-static void run_session(int cfd, shm_stats_t *stats, shm_store_t *store) {
+/* han edit tls */
+static void run_session(int cfd, SSL *ssl, shm_stats_t *stats, shm_store_t *store) {
+/* han edit tls end */
     srand((unsigned)(time(NULL) ^ getpid()));
     
     // We need a session ID. 
@@ -314,10 +321,14 @@ static void run_session(int cfd, shm_stats_t *stats, shm_store_t *store) {
     while (my_sid == 0) {
        uint16_t op = 0;
        uint32_t plen = 0;
-       if (proto_recv(cfd, &op, payload, sizeof(payload), &plen) != 0) return;
+       /* han edit tls */
+       if (proto_recv(cfd, ssl, &op, payload, sizeof(payload), &plen) != 0) return;
+       /* han edit tls end */
 
        if (op == OP_PING) {
-            proto_send(cfd, OP_PONG, NULL, 0);
+            /* han edit tls */
+            proto_send(cfd, ssl, OP_PONG, NULL, 0);
+            /* han edit tls end */
             continue;
        }
 
@@ -330,13 +341,19 @@ static void run_session(int cfd, shm_stats_t *stats, shm_store_t *store) {
            
            my_sid = ipc_alloc_session(store);
            if (my_sid == 0) {
-               err_send(cfd, -999, "server full");
+               /* han edit tls */
+               err_send(cfd, ssl, -999, "server full");
+               /* han edit tls end */
                return; 
            }
            ipc_save_session(store, my_sid, &st, &hand);
 
+
            login_resp_t resp = { .ok = 1 };
-           proto_send(cfd, OP_LOGIN_RESP, &resp, sizeof(resp));
+
+           /* han edit tls */
+           proto_send(cfd, ssl, OP_LOGIN_RESP, &resp, sizeof(resp));
+           /* han edit tls end */
            
            // Send Resume info (Session ID) - ACTUALLY Login Resp doesn't have SID in MVP v1.
            // Teacher requirements: "client adds ... Resume Req". 
@@ -349,10 +366,12 @@ static void run_session(int cfd, shm_stats_t *stats, shm_store_t *store) {
            // Or better: The client expects OP_STATE / OP_HAND.
            // Let's send OP_RESUME_RESP with ok=1 and sid.
            resume_resp_t rr = { .ok = 1, .session_id = my_sid };
-           proto_send(cfd, OP_RESUME_RESP, &rr, sizeof(rr));
+           /* han edit tls */
+           proto_send(cfd, ssl, OP_RESUME_RESP, &rr, sizeof(rr));
            
-           proto_send(cfd, OP_STATE, &st, sizeof(st));
-           proto_send(cfd, OP_HAND, &hand, sizeof(hand));
+           proto_send(cfd, ssl, OP_STATE, &st, sizeof(st));
+           proto_send(cfd, ssl, OP_HAND, &hand, sizeof(hand));
+           /* han edit tls end */
            break;
        }
        else if (op == OP_RESUME_REQ) {
@@ -362,16 +381,20 @@ static void run_session(int cfd, shm_stats_t *stats, shm_store_t *store) {
                // Found
                my_sid = rr->session_id;
                resume_resp_t rresp = { .ok = 1, .session_id = my_sid };
-               proto_send(cfd, OP_RESUME_RESP, &rresp, sizeof(rresp));
-               proto_send(cfd, OP_STATE, &st, sizeof(st));
-               proto_send(cfd, OP_HAND, &hand, sizeof(hand));
+               /* han edit tls */
+               proto_send(cfd, ssl, OP_RESUME_RESP, &rresp, sizeof(rresp));
+               proto_send(cfd, ssl, OP_STATE, &st, sizeof(st));
+               proto_send(cfd, ssl, OP_HAND, &hand, sizeof(hand));
+               /* han edit tls end */
                
                push_log(&st, "Player Resumed Session");
                break;
            } else {
                // Not found
                resume_resp_t rresp = { .ok = 0, .session_id = 0 };
-               proto_send(cfd, OP_RESUME_RESP, &rresp, sizeof(rresp));
+               /* han edit tls */
+               proto_send(cfd, ssl, OP_RESUME_RESP, &rresp, sizeof(rresp));
+               /* han edit tls end */
                // Client should try Login
            }
        }
@@ -391,28 +414,36 @@ static void run_session(int cfd, shm_stats_t *stats, shm_store_t *store) {
              ipc_save_session(store, my_sid, &st, &hand);
         }
 
-        if (proto_recv(cfd, &op, payload, sizeof(payload), &plen) != 0) break;
+        /* han edit tls */
+        if (proto_recv(cfd, ssl, &op, payload, sizeof(payload), &plen) != 0) break;
+        /* han edit tls end */
 
         ipc_stats_inc_pkt(stats);
         // implicit heartbeat on any packet
         ipc_touch_session(store, my_sid);
 
         if (op == OP_PING) {
-            proto_send(cfd, OP_PONG, NULL, 0);
+            /* han edit tls */
+            proto_send(cfd, ssl, OP_PONG, NULL, 0);
+            /* han edit tls end */
             continue;
         }
 
         if (st.game_over) {
-            proto_send(cfd, OP_STATE, &st, sizeof(st));
-            proto_send(cfd, OP_HAND, &hand, sizeof(hand));
+            /* han edit tls */
+            proto_send(cfd, ssl, OP_STATE, &st, sizeof(st));
+            proto_send(cfd, ssl, OP_HAND, &hand, sizeof(hand));
+            /* han edit tls end */
             continue;
         }
 
         if (op == OP_PLAY_CARD) {
-            if (st.turn != 0) { err_send(cfd, -11, "not your turn"); continue; }
-            if (st.phase != PHASE_MAIN) { err_send(cfd, -12, "phase error"); continue; }
-            if (plen != sizeof(play_req_t)) { err_send(cfd, -10, "bad payload"); continue; }
-
+            /* han edit tls */
+            if (st.turn != 0) { err_send(cfd, ssl, -11, "not your turn"); continue; }
+            if (st.phase != PHASE_MAIN) { err_send(cfd, ssl, -12, "phase error"); continue; }
+            if (plen != sizeof(play_req_t)) { err_send(cfd, ssl, -10, "bad payload"); continue; }
+            /* han edit tls end */
+            
             play_req_t pr;
             memcpy(&pr, payload, sizeof(pr));
 
@@ -420,20 +451,26 @@ static void run_session(int cfd, shm_stats_t *stats, shm_store_t *store) {
             if (rc == 0) {
                 // ok
             } else {
-                if (rc == -1) err_send(cfd, -1, "invalid hand idx");
-                else if (rc == -2) err_send(cfd, -2, "not enough mana");
-                else err_send(cfd, -3, "invalid card");
+                /* han edit tls */
+                if (rc == -1) err_send(cfd, ssl, -1, "invalid hand idx");
+                else if (rc == -2) err_send(cfd, ssl, -2, "not enough mana");
+                else err_send(cfd, ssl, -3, "invalid card");
+                /* han edit tls end */
             }
             
             ipc_save_session(store, my_sid, &st, &hand); // Sync to SHM
 
-            proto_send(cfd, OP_STATE, &st, sizeof(st));
-            proto_send(cfd, OP_HAND, &hand, sizeof(hand));
+            /* han edit tls */
+            proto_send(cfd, ssl, OP_STATE, &st, sizeof(st));
+            proto_send(cfd, ssl, OP_HAND, &hand, sizeof(hand));
+            /* han edit tls end */
             continue;
         }
 
         if (op == OP_END_TURN) {
-            if (st.turn != 0) { err_send(cfd, -11, "not your turn"); continue; }
+            /* han edit tls */
+            if (st.turn != 0) { err_send(cfd, ssl, -11, "not your turn"); continue; }
+            /* han edit tls end */
 
             phase_end(&st, &hand); // Switch to AI
             
@@ -444,17 +481,27 @@ static void run_session(int cfd, shm_stats_t *stats, shm_store_t *store) {
                  ipc_save_session(store, my_sid, &st, &hand);
             }
 
-            proto_send(cfd, OP_STATE, &st, sizeof(st));
-            proto_send(cfd, OP_HAND, &hand, sizeof(hand));
+            /* han edit tls */
+            proto_send(cfd, ssl, OP_STATE, &st, sizeof(st));
+            proto_send(cfd, ssl, OP_HAND, &hand, sizeof(hand));
+            /* han edit tls end */
             continue;
         }
 
         // Ignore duplicates LOGIN/RESUME in loop
         if (op == OP_LOGIN_REQ || op == OP_RESUME_REQ) continue;
 
-        err_send(cfd, -99, "unknown opcode");
+        /* han edit tls */
+        err_send(cfd, ssl, -99, "unknown opcode");
+        /* han edit tls end */
     }
 
+    /* han edit tls */
+    if (ssl) { // Should check ref
+         SSL_shutdown(ssl);
+         SSL_free(ssl);
+    }
+    /* han edit tls end */
     close(cfd);
 }
 
@@ -485,6 +532,12 @@ int main(int argc, char **argv) {
     }
     fprintf(stderr, "[server] listen on %u\n", port);
 
+    /* han edit tls */
+    net_init_ssl();
+    SSL_CTX *ctx = net_create_context(1); // 1 = server
+    net_configure_context(ctx, "server.crt", "server.key");
+    /* han edit tls end */
+
     while (!g_stop) {
         struct sockaddr_storage ss;
         socklen_t slen = sizeof(ss);
@@ -498,12 +551,25 @@ int main(int argc, char **argv) {
             // Re-open/map IPC in child (optional, as fork inherits maps, but clean habits good)
             // Note: fork inherits mmap, so we can just use `stats` and `store`.
             
-            if (stats && store) {
-                ipc_stats_inc_conn(stats);
-                run_session(cfd, stats, store);
-            } else {
-                close(cfd);
-            }
+                if (stats && store) {
+                    ipc_stats_inc_conn(stats);
+                    /* han edit start */
+                    // Set 5 seconds timeout for server
+                    net_set_timeout(cfd, 5);
+                    /* han edit end */
+                    
+                    /* han edit tls */
+                    SSL *ssl = SSL_new(ctx);
+                    SSL_set_fd(ssl, cfd);
+                    if (SSL_accept(ssl) <= 0) {
+                        ERR_print_errors_fp(stderr);
+                    } else {
+                        run_session(cfd, ssl, stats, store);
+                    }
+                    /* han edit tls end */
+                } else {
+                    close(cfd);
+                }
             _exit(0);
         } else if (pid > 0) {
             close(cfd);
@@ -514,6 +580,9 @@ int main(int argc, char **argv) {
     }
 
     close(lfd);
+    /* han edit tls */
+    SSL_CTX_free(ctx);
+    /* han edit tls end */
     fprintf(stderr, "[server] shutdown\n");
     return 0;
 }

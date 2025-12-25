@@ -11,7 +11,9 @@ uint16_t proto_checksum16(const void *buf, size_t n) {
     return (uint16_t)(~sum);
 }
 
-int proto_send(int fd, uint16_t opcode, const void *payload, uint32_t payload_len) {
+/* han edit tls */
+int proto_send(int fd, SSL *ssl, uint16_t opcode, const void *payload, uint32_t payload_len) {
+/* han edit tls end */
     pkt_hdr_t h;
     uint32_t total_len = (uint32_t)sizeof(h) + payload_len;
 
@@ -32,13 +34,28 @@ int proto_send(int fd, uint16_t opcode, const void *payload, uint32_t payload_le
     ((pkt_hdr_t*)buf)->cksum = htons(cks);
 
     // write out
-    if (writen(fd, buf, total_len) != (ssize_t)total_len) return -1;
+    // write out
+    /* han edit tls */
+    if (ssl) {
+        if (ssl_writen(ssl, buf, total_len) != (ssize_t)total_len) return -1;
+    } else {
+        if (writen(fd, buf, total_len) != (ssize_t)total_len) return -1;
+    }
+    /* han edit tls end */
     return 0;
 }
 
-int proto_recv(int fd, uint16_t *opcode_out, void *payload_buf, uint32_t payload_buf_cap, uint32_t *payload_len_out) {
+/* han edit tls */
+int proto_recv(int fd, SSL *ssl, uint16_t *opcode_out, void *payload_buf, uint32_t payload_buf_cap, uint32_t *payload_len_out) {
+/* han edit tls end */
     pkt_hdr_t h;
-    if (readn(fd, &h, sizeof(h)) != (ssize_t)sizeof(h)) return -1;
+    /* han edit tls */
+    ssize_t r = 0;
+    if (ssl) r = ssl_readn(ssl, &h, sizeof(h));
+    else r = readn(fd, &h, sizeof(h));
+    
+    if (r != (ssize_t)sizeof(h)) return -1;
+    /* han edit tls end */
 
     uint32_t total_len = ntohl(h.len);
     uint16_t opcode = ntohs(h.opcode);
@@ -48,7 +65,13 @@ int proto_recv(int fd, uint16_t *opcode_out, void *payload_buf, uint32_t payload
 
     uint32_t payload_len = total_len - (uint32_t)sizeof(h);
     if (payload_len) {
-        if (readn(fd, payload_buf, payload_len) != (ssize_t)payload_len) return -1;
+        /* han edit tls */
+        if (ssl) {
+             if (ssl_readn(ssl, payload_buf, payload_len) != (ssize_t)payload_len) return -1;
+        } else {
+             if (readn(fd, payload_buf, payload_len) != (ssize_t)payload_len) return -1;
+        }
+        /* han edit tls end */
     }
 
     // verify checksum

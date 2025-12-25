@@ -1,6 +1,9 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
+/* han edit tls */
+#include <openssl/ssl.h>
+/* han edit tls end */
 
 #define PROTO_MAGIC_SHM "/tcgmini_shm_v1"
 
@@ -139,5 +142,7 @@ typedef struct {
 uint16_t proto_checksum16(const void *buf, size_t n);
 
 // pack & send / recv helpers
-int proto_send(int fd, uint16_t opcode, const void *payload, uint32_t payload_len);
-int proto_recv(int fd, uint16_t *opcode_out, void *payload_buf, uint32_t payload_buf_cap, uint32_t *payload_len_out);
+/* han edit tls */
+int proto_send(int fd, SSL *ssl, uint16_t opcode, const void *payload, uint32_t payload_len);
+int proto_recv(int fd, SSL *ssl, uint16_t *opcode_out, void *payload_buf, uint32_t payload_buf_cap, uint32_t *payload_len_out);
+/* han edit tls end */

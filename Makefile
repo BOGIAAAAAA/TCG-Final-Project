@@ -1,6 +1,7 @@
 CC=gcc
 CFLAGS=-O2 -Wall -Wextra -std=c11 -pthread
-LDFLAGS=-pthread -lrt
+LDFLAGS=-pthread -lrt -lssl -lcrypto
+
 
 COMMON_OBJ=src/common/proto.o src/common/net.o src/common/ipc.o
 COMMON_LIB=libcommon.a

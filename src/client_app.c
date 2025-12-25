@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "common/net.h"
 #include "common/proto.h"
+#include <errno.h>
 
 #include <ncursesw/ncurses.h>
 #include <string.h>
@@ -8,14 +9,24 @@
 #include <unistd.h>
 #include <stdio.h>
 
-static int recv_until(int fd, state_t *st, hand_t *hand) {
+static int recv_until(int fd, SSL *ssl, state_t *st, hand_t *hand) {
+
     int got_state = 0, got_hand = 0;
     uint8_t buf[2048];
     uint16_t op;
     uint32_t plen;
 
     while (!(got_state && got_hand)) {
-        if (proto_recv(fd, &op, buf, sizeof(buf), &plen) != 0) return -1;
+        /* han edit tls */
+        if (proto_recv(fd, ssl, &op, buf, sizeof(buf), &plen) != 0) {
+        /* han edit tls end */
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+               endwin(); fprintf(stderr, "[client] Receive timeout (waited > 3s)\n");
+            } else {
+               endwin(); perror("[client] recv error");
+            }
+            return -1;
+        }
 
         if (op == OP_STATE && plen == sizeof(state_t)) {
             memcpy(st, buf, sizeof(state_t));
@@ -62,12 +73,31 @@ int run_app_mode(const char *host, uint16_t port) {
         perror("tcp_connect");
         return 1;
     }
+    
+    net_set_timeout(fd, 3);
 
-    // login
-    if (proto_send(fd, OP_LOGIN_REQ, NULL, 0) != 0) {
+    /* han edit tls */
+    net_init_ssl();
+    SSL_CTX *ctx = net_create_context(0);
+    SSL *ssl = SSL_new(ctx);
+    SSL_set_fd(ssl, fd);
+    if (SSL_connect(ssl) <= 0) {
+        ERR_print_errors_fp(stderr);
+        SSL_free(ssl);
+        SSL_CTX_free(ctx);
         close(fd);
         return 1;
     }
+    /* han edit tls end */
+
+    // login
+    /* han edit tls */
+    if (proto_send(fd, ssl, OP_LOGIN_REQ, NULL, 0) != 0) {
+        SSL_shutdown(ssl); SSL_free(ssl); SSL_CTX_free(ctx);
+        close(fd);
+        return 1;
+    }
+    /* han edit tls end */
 
     state_t st;
     hand_t hand;
@@ -75,10 +105,13 @@ int run_app_mode(const char *host, uint16_t port) {
     memset(&hand, 0, sizeof(hand));
 
     // Receive initial STATE + HAND
-    if (recv_until(fd, &st, &hand) != 0) {
+    /* han edit tls */
+    if (recv_until(fd, ssl, &st, &hand) != 0) {
+        SSL_shutdown(ssl); SSL_free(ssl); SSL_CTX_free(ctx);
         close(fd);
         return 1;
     }
+    /* han edit tls end */
 
     // ncurses init
     initscr();
@@ -99,8 +132,10 @@ int run_app_mode(const char *host, uint16_t port) {
         }
 
         if (ch == 'e' || ch == 'E') {
-            if (proto_send(fd, OP_END_TURN, NULL, 0) != 0) break;
-            if (recv_until(fd, &st, &hand) != 0) break;
+            /* han edit tls */
+            if (proto_send(fd, ssl, OP_END_TURN, NULL, 0) != 0) break;
+            if (recv_until(fd, ssl, &st, &hand) != 0) break;
+            /* han edit tls end */
             continue;
         }
 
@@ -111,13 +146,22 @@ int run_app_mode(const char *host, uint16_t port) {
             play_req_t pc;
             pc.hand_idx = (uint8_t)idx;
 
-            if (proto_send(fd, OP_PLAY_CARD, &pc, sizeof(pc)) != 0) break;
-            if (recv_until(fd, &st, &hand) != 0) break;
+            pc.hand_idx = (uint8_t)idx;
+
+            /* han edit tls */
+            if (proto_send(fd, ssl, OP_PLAY_CARD, &pc, sizeof(pc)) != 0) break;
+            if (recv_until(fd, ssl, &st, &hand) != 0) break;
+            /* han edit tls end */
             continue;
         }
     }
 
     endwin();
+    /* han edit tls */
+    SSL_shutdown(ssl);
+    SSL_free(ssl);
+    SSL_CTX_free(ctx);
+    /* han edit tls end */
     close(fd);
     return 0;
 }
