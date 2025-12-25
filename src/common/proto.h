@@ -138,5 +138,8 @@ typedef struct {
 uint16_t proto_checksum16(const void *buf, size_t n);
 
 // pack & send / recv helpers
-int proto_send(int fd, uint16_t opcode, const void *payload, uint32_t payload_len);
-int proto_recv(int fd, uint16_t *opcode_out, void *payload_buf, uint32_t payload_buf_cap, uint32_t *payload_len_out);
+// pack & send / recv helpers
+#include "net.h"
+int proto_send(connection_t *c, uint16_t opcode, const void *payload, uint32_t payload_len);
+int proto_recv(connection_t *c, uint16_t *opcode_out, void *payload_buf, uint32_t payload_buf_cap, uint32_t *payload_len_out);
+

@@ -10,6 +10,25 @@
 #include <sys/wait.h>
 #include <stdarg.h>
 #include <time.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+
+/* --- Logging Helper --- */
+static void log_info(const char *fmt, ...) {
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    char buf[32];
+    strftime(buf, sizeof(buf), "%H:%M:%S", tm);
+    
+    fprintf(stderr, "[%s] [INFO] ", buf); // TIMESTAMP
+    
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+}
 
 /* forward declarations */
 static void on_sigint(int);
@@ -86,8 +105,16 @@ static void check_game_over(state_t *st) {
 #include "common/cards.h"
 
 static uint16_t rand_card_id(void) {
-    // Valid IDs are 1..11
-    return (uint16_t)((rand() % 11) + 1);
+    // Pool of new IDs
+    static const uint16_t pool[] = {
+        100, 101, 102, // ATK
+        200, 201,      // HEAL
+        300, 301,      // SHIELD
+        400, 401,      // BUFF
+        500, 501       // POISON
+    };
+    int n = sizeof(pool)/sizeof(pool[0]);
+    return pool[rand() % n];
 }
 
 static void deal_hand(hand_t *h) {
@@ -96,7 +123,7 @@ static void deal_hand(hand_t *h) {
     for (int i = 0; i < 3; i++) h->card_ids[i] = rand_card_id();
 }
 
-static int err_send(int fd, int32_t code, const char *msg) {
+static int err_send(connection_t *c, int32_t code, const char *msg) { // Fixed signature in prev step
     error_t e;
     memset(&e, 0, sizeof(e));
     e.code = code;
@@ -104,21 +131,18 @@ static int err_send(int fd, int32_t code, const char *msg) {
         strncpy(e.msg, msg, sizeof(e.msg) - 1);
         e.msg[sizeof(e.msg) - 1] = '\0';
     }
-    return proto_send(fd, OP_ERROR, &e, sizeof(e));
+    return proto_send(c, OP_ERROR, &e, sizeof(e));
 }
 
 static int handle_play_card(state_t *st, hand_t *hand, int is_player, uint8_t idx) {
     if (idx >= hand->n) return -1;
     
-    // Look up ID
     uint16_t cid = hand->card_ids[idx];
-    // Check if valid/already played (0 = empty/played)
     if (cid == 0) return -3;
 
     const card_def_t *c = get_card_def(cid);
     if (!c) return -3;
 
-    // MVP: st->mana is the mana of current turn owner.
     if (c->cost > st->mana) return -2;
     st->mana = (uint8_t)(st->mana - c->cost);
 
@@ -148,14 +172,15 @@ static int handle_play_card(state_t *st, hand_t *hand, int is_player, uint8_t id
                      (int)c->value, st->mana);
         } break;
         case CT_BUFF: {
+            // User logic: BUFF adds to NEXT attack.
             *self_buff = (int16_t)(*self_buff + c->value);
             push_log(st, "%s BUFF (+%d next) [mana %u]", is_player ? "P" : "AI",
                      (int)c->value, st->mana);
         } break;
         case CT_POISON: {
-            // add turns to enemy poison
+            // User logic: POISON adds TURNS. (Value = turns)
             *enemy_poison = (uint8_t)(*enemy_poison + (uint8_t)c->value);
-            push_log(st, "%s POISON (+%d) [mana %u]", is_player ? "P" : "AI",
+            push_log(st, "%s POISON (+%d turns) [mana %u]", is_player ? "P" : "AI",
                      (int)c->value, st->mana);
         } break;
         default:
@@ -166,7 +191,7 @@ static int handle_play_card(state_t *st, hand_t *hand, int is_player, uint8_t id
     return 0;
 }
 
-// FSM Forward Declarations
+// FSM and AI (Same as before but ensures correct logic usage)
 static void enter_turn(state_t *st, hand_t *hand, int side);
 static void phase_draw(state_t *st, hand_t *hand);
 static void phase_end(state_t *st, hand_t *hand);
@@ -181,86 +206,49 @@ static void phase_draw(state_t *st, hand_t *hand) {
     st->mana = st->max_mana;
     if (st->turn == 0) { // Player
         deal_hand(hand);
-        push_log(st, "P: DRAW PHASE (3 cards)");
+        push_log(st, "P: DRAW PHASE");
     } else { // AI
-        deal_hand(hand); // Assume AI also "draws" (gets a fresh hand for simplicity logic)
+        deal_hand(hand);
         push_log(st, "AI: DRAW PHASE");
     }
-    
-    // Auto transition to MAIN
     st->phase = PHASE_MAIN;
-    // Note: In a real async game, we might wait here. But for now, just push to MAIN.
-    // Log transition
-    // push_log(st, "%s: PHASE MAIN", st->turn == 0 ? "P" : "AI");
 }
 
 static void phase_end(state_t *st, hand_t *hand) {
-    st->phase = PHASE_END; // visually show we are in END
-    
-    // Poison / Status ticks
+    st->phase = PHASE_END;
     push_log(st, "%s: END PHASE", st->turn == 0 ? "P" : "AI");
-    
     tick_poison(st);
     check_game_over(st);
-
     if (st->game_over) return;
-
-    // Switch side
     int next_side = (st->turn == 0) ? 1 : 0;
     enter_turn(st, hand, next_side);
 }
 
 static int ai_eval_card(const state_t *st, const card_def_t *c) {
     int score = 0;
-
-    // Survival priority (HP < 10)
-    if (st->ai_hp < 10) {
-        if (c->type == CT_HEAL) score += 100;
-    }
-
-    // Counter-play: Break player shield
-    if (st->p_shield > 0) {
-        if (c->type == CT_BUFF) score += 40;
-    }
-
+    if (st->ai_hp < 10 && c->type == CT_HEAL) score += 100;
+    if (st->p_shield > 0 && c->type == CT_BUFF) score += 40; // Break shield setup
+    
     switch (c->type) {
-        case CT_ATK:
-            score += c->value;
-            break;
-        case CT_POISON:
-            // Early poison is better
-            if (st->p_poison == 0) score += 30;
-            break;
-        case CT_SHIELD:
-            if (st->ai_shield == 0) score += 20;
-            break;
+        case CT_ATK: score += c->value; break;
+        case CT_POISON: if (st->p_poison == 0) score += 30; break;
+        case CT_SHIELD: if (st->ai_shield == 0) score += 20; break;
         default: break;
     }
-
-    // Efficiency: prefer cheaper cards for similar utility
     score -= (c->cost * 2);
-
     return score;
 }
 
-// AI Turn Execution (called when it becomes AI's turn during FSM flow)
-// In this sync model, when we switch to AI, we execute its entire turn then switch back to Player
 static void process_ai_turn(state_t *st, hand_t *hand) {
-    // AI is in MAIN phase now (set by enter_turn -> phase_draw)
-    
-    // AI Loop: play cards while it can
     while (st->phase == PHASE_MAIN && !st->game_over) {
         int best_idx = -1;
         int best_score = -9999;
 
         for (int i = 0; i < hand->n; i++) {
             uint16_t cid = hand->card_ids[i];
-            if (cid == 0) continue; // Already played
-            
+            if (cid == 0) continue;
             const card_def_t *c = get_card_def(cid);
             if (!c) continue;
-
-            // Check if card is playable (cost <= mana)
             if (c->cost <= st->mana) {
                 int score = ai_eval_card(st, c);
                 if (score > best_score) {
@@ -271,28 +259,21 @@ static void process_ai_turn(state_t *st, hand_t *hand) {
         }
         
         if (best_idx >= 0) {
-            // Play card
-            int rc = handle_play_card(st, hand, 0 /* is_player=0 */, (uint8_t)best_idx);
-            if (rc != 0) {
-                // Should not happen if logic is correct, but break to avoid loop
-                break;
-            }
-            // Mark as used (set ID to 0)
-             hand->card_ids[best_idx] = 0; 
+            handle_play_card(st, hand, 0, (uint8_t)best_idx);
+            hand->card_ids[best_idx] = 0; 
         } else {
-            // No more playable cards
             break; 
         }
     }
-    
-    if (!st->game_over) {
-         phase_end(st, hand);
-    }
+    if (!st->game_over) phase_end(st, hand);
 }
 
-static void run_session(int cfd, shm_stats_t *stats, shm_store_t *store) {
+static void run_session(int cfd, SSL *ssl, shm_stats_t *stats, shm_store_t *store) {
     srand((unsigned)(time(NULL) ^ getpid()));
     
+    connection_t conn;
+    conn_init(&conn, cfd, ssl);
+
     // We need a session ID. 
     // Wait for LOGIN or RESUME.
     uint64_t my_sid = 0;
@@ -308,10 +289,10 @@ static void run_session(int cfd, shm_stats_t *stats, shm_store_t *store) {
     while (my_sid == 0) {
        uint16_t op = 0;
        uint32_t plen = 0;
-       if (proto_recv(cfd, &op, payload, sizeof(payload), &plen) != 0) return;
+       if (proto_recv(&conn, &op, payload, sizeof(payload), &plen) != 0) { conn_close(&conn); return; }
 
        if (op == OP_PING) {
-            proto_send(cfd, OP_PONG, NULL, 0);
+            proto_send(&conn, OP_PONG, NULL, 0);
             continue;
        }
 
@@ -324,48 +305,39 @@ static void run_session(int cfd, shm_stats_t *stats, shm_store_t *store) {
            
            my_sid = ipc_alloc_session(store);
            if (my_sid == 0) {
-               err_send(cfd, -999, "server full");
+               err_send(&conn, -999, "server full");
+               conn_close(&conn);
                return; 
            }
            ipc_save_session(store, my_sid, &st, &hand);
 
            login_resp_t resp = { .ok = 1 };
-           proto_send(cfd, OP_LOGIN_RESP, &resp, sizeof(resp));
+           proto_send(&conn, OP_LOGIN_RESP, &resp, sizeof(resp));
            
-           // Send Resume info (Session ID) - ACTUALLY Login Resp doesn't have SID in MVP v1.
-           // Teacher requirements: "client adds ... Resume Req". 
-           // We need to tell client the Session ID. 
-           // HACK: Send RESUME_RESP right after LOGIN_RESP? Or piggyback?
-           // The protocol definition for LOGIN_RESP is just `int32_t ok`.
-           // Let's send a RESUME_RESP packet immediately after Login to give the ID.
-           // Or change LOGIN_RESP struct (breaking change?). 
-           // Protocol v2. Let's send RESUME_RESP as an "Info" packet.
-           // Or better: The client expects OP_STATE / OP_HAND.
-           // Let's send OP_RESUME_RESP with ok=1 and sid.
            resume_resp_t rr = { .ok = 1, .session_id = my_sid };
-           proto_send(cfd, OP_RESUME_RESP, &rr, sizeof(rr));
+           proto_send(&conn, OP_RESUME_RESP, &rr, sizeof(rr));
            
-           proto_send(cfd, OP_STATE, &st, sizeof(st));
-           proto_send(cfd, OP_HAND, &hand, sizeof(hand));
+           proto_send(&conn, OP_STATE, &st, sizeof(st));
+           proto_send(&conn, OP_HAND, &hand, sizeof(hand));
            break;
        }
        else if (op == OP_RESUME_REQ) {
-           if (plen < sizeof(resume_req_t)) { close(cfd); return; }
+           if (plen < sizeof(resume_req_t)) { conn_close(&conn); return; }
            resume_req_t *rr = (resume_req_t*)payload;
            if (ipc_load_session(store, rr->session_id, &st, &hand) == 0) {
                // Found
                my_sid = rr->session_id;
                resume_resp_t rresp = { .ok = 1, .session_id = my_sid };
-               proto_send(cfd, OP_RESUME_RESP, &rresp, sizeof(rresp));
-               proto_send(cfd, OP_STATE, &st, sizeof(st));
-               proto_send(cfd, OP_HAND, &hand, sizeof(hand));
+               proto_send(&conn, OP_RESUME_RESP, &rresp, sizeof(rresp));
+               proto_send(&conn, OP_STATE, &st, sizeof(st));
+               proto_send(&conn, OP_HAND, &hand, sizeof(hand));
                
                push_log(&st, "Player Resumed Session");
                break;
            } else {
                // Not found
                resume_resp_t rresp = { .ok = 0, .session_id = 0 };
-               proto_send(cfd, OP_RESUME_RESP, &rresp, sizeof(rresp));
+               proto_send(&conn, OP_RESUME_RESP, &rresp, sizeof(rresp));
                // Client should try Login
            }
        }
@@ -385,27 +357,27 @@ static void run_session(int cfd, shm_stats_t *stats, shm_store_t *store) {
              ipc_save_session(store, my_sid, &st, &hand);
         }
 
-        if (proto_recv(cfd, &op, payload, sizeof(payload), &plen) != 0) break;
+        if (proto_recv(&conn, &op, payload, sizeof(payload), &plen) != 0) break;
 
         ipc_stats_inc_pkt(stats);
         // implicit heartbeat on any packet
         ipc_touch_session(store, my_sid);
 
         if (op == OP_PING) {
-            proto_send(cfd, OP_PONG, NULL, 0);
+            proto_send(&conn, OP_PONG, NULL, 0);
             continue;
         }
 
         if (st.game_over) {
-            proto_send(cfd, OP_STATE, &st, sizeof(st));
-            proto_send(cfd, OP_HAND, &hand, sizeof(hand));
+            proto_send(&conn, OP_STATE, &st, sizeof(st));
+            proto_send(&conn, OP_HAND, &hand, sizeof(hand));
             continue;
         }
 
         if (op == OP_PLAY_CARD) {
-            if (st.turn != 0) { err_send(cfd, -11, "not your turn"); continue; }
-            if (st.phase != PHASE_MAIN) { err_send(cfd, -12, "phase error"); continue; }
-            if (plen != sizeof(play_req_t)) { err_send(cfd, -10, "bad payload"); continue; }
+            if (st.turn != 0) { err_send(&conn, -11, "not your turn"); continue; }
+            if (st.phase != PHASE_MAIN) { err_send(&conn, -12, "phase error"); continue; }
+            if (plen != sizeof(play_req_t)) { err_send(&conn, -10, "bad payload"); continue; }
 
             play_req_t pr;
             memcpy(&pr, payload, sizeof(pr));
@@ -414,20 +386,20 @@ static void run_session(int cfd, shm_stats_t *stats, shm_store_t *store) {
             if (rc == 0) {
                 // ok
             } else {
-                if (rc == -1) err_send(cfd, -1, "invalid hand idx");
-                else if (rc == -2) err_send(cfd, -2, "not enough mana");
-                else err_send(cfd, -3, "invalid card");
+                if (rc == -1) err_send(&conn, -1, "invalid hand idx");
+                else if (rc == -2) err_send(&conn, -2, "not enough mana");
+                else err_send(&conn, -3, "invalid card");
             }
             
             ipc_save_session(store, my_sid, &st, &hand); // Sync to SHM
 
-            proto_send(cfd, OP_STATE, &st, sizeof(st));
-            proto_send(cfd, OP_HAND, &hand, sizeof(hand));
+            proto_send(&conn, OP_STATE, &st, sizeof(st));
+            proto_send(&conn, OP_HAND, &hand, sizeof(hand));
             continue;
         }
 
         if (op == OP_END_TURN) {
-            if (st.turn != 0) { err_send(cfd, -11, "not your turn"); continue; }
+            if (st.turn != 0) { err_send(&conn, -11, "not your turn"); continue; }
 
             phase_end(&st, &hand); // Switch to AI
             
@@ -438,18 +410,18 @@ static void run_session(int cfd, shm_stats_t *stats, shm_store_t *store) {
                  ipc_save_session(store, my_sid, &st, &hand);
             }
 
-            proto_send(cfd, OP_STATE, &st, sizeof(st));
-            proto_send(cfd, OP_HAND, &hand, sizeof(hand));
+            proto_send(&conn, OP_STATE, &st, sizeof(st));
+            proto_send(&conn, OP_HAND, &hand, sizeof(hand));
             continue;
         }
 
         // Ignore duplicates LOGIN/RESUME in loop
         if (op == OP_LOGIN_REQ || op == OP_RESUME_REQ) continue;
 
-        err_send(cfd, -99, "unknown opcode");
+        err_send(&conn, -99, "unknown opcode");
     }
 
-    close(cfd);
+    conn_close(&conn);
 }
 
 int main(int argc, char **argv) {
@@ -459,6 +431,13 @@ int main(int argc, char **argv) {
     signal(SIGINT, on_sigint);
     signal(SIGTERM, on_sigint);
     signal(SIGCHLD, on_sigchld);
+
+    ssl_msg_init();
+    SSL_CTX *ctx = ssl_init_server_ctx("server.crt", "server.key");
+    if (!ctx) {
+        fprintf(stderr, "Failed to init SSL context. Check certs.\n");
+        return 1;
+    }
 
     shm_stats_t *stats = ipc_stats_init(1);
     if (!stats) {
@@ -477,7 +456,7 @@ int main(int argc, char **argv) {
         perror("tcp_listen");
         return 1;
     }
-    fprintf(stderr, "[server] listen on %u\n", port);
+    log_info("[server] listen on %u (SSL)\n", port);
 
     while (!g_stop) {
         struct sockaddr_storage ss;
@@ -489,13 +468,25 @@ int main(int argc, char **argv) {
         if (pid == 0) {
             // child
             close(lfd);
-            // Re-open/map IPC in child (optional, as fork inherits maps, but clean habits good)
-            // Note: fork inherits mmap, so we can just use `stats` and `store`.
             
+            // SSL Handshake in Child
+            SSL *ssl = SSL_new(ctx);
+            SSL_set_fd(ssl, cfd);
+            if (SSL_accept(ssl) <= 0) {
+                ERR_print_errors_fp(stderr);
+                // Do not use conn_close here as we constructed partial object?
+                // Or just use OpenSSL cleanup manually
+                SSL_free(ssl);
+                close(cfd);
+                _exit(1);
+            }
+
             if (stats && store) {
                 ipc_stats_inc_conn(stats);
-                run_session(cfd, stats, store);
+                run_session(cfd, ssl, stats, store);
             } else {
+                SSL_shutdown(ssl);
+                SSL_free(ssl);
                 close(cfd);
             }
             _exit(0);
@@ -508,6 +499,13 @@ int main(int argc, char **argv) {
     }
 
     close(lfd);
-    fprintf(stderr, "[server] shutdown\n");
+    SSL_CTX_free(ctx);
+    log_info("[server] shutdown initiated\n");
+
+    // --- Cleanup Shared Memory ---
+    shm_unlink(PROTO_MAGIC_SHM); 
+    shm_unlink(STORE_MAGIC_SHM);
+    
+    log_info("Shared memory unlinked\n");
     return 0;
 }
