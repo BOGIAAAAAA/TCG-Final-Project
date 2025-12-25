@@ -314,6 +314,90 @@ static void DrawPanel(int x, int y, int w, int h) {
     DrawRectangleLinesEx((Rectangle){x, y, w, h}, 1, (Color){60, 60, 60, 150}); // Thinner Frame
 }
 
+static Rectangle SrcCropToFit(Texture2D tex, float targetW, float targetH)
+{
+    float srcW = (float)tex.width;
+    float srcH = (float)tex.height;
+    if (srcW <= 0 || srcH <= 0) return (Rectangle){0,0,1,1};
+
+    float srcAspect = srcW / srcH;
+    float dstAspect = targetW / targetH;
+
+    Rectangle src = {0};
+
+    if (srcAspect > dstAspect) {
+        // Source is wider -> Cut left/right
+        float newW = srcH * dstAspect;
+        src.width  = newW;
+        src.height = srcH;
+        src.x = (srcW - newW) * 0.5f;
+        src.y = 0;
+    } else {
+        // Source is taller -> Cut top/bottom
+        // USER REQUEST: Align to TOP (y=0) to show heads/sky, not center/crotch.
+        float newH = srcW / dstAspect;
+        src.width  = srcW;
+        src.height = newH;
+        src.x = 0;
+        src.y = 0; // Top Align
+    }
+    return src;
+}
+
+static void DrawCardVertical(Texture2D art, Rectangle cardRect,
+                             const card_def_t *def,
+                             bool disabled, bool hovered, bool selected)
+{
+    // Back panel
+    Color bg = (Color){20,20,20,240};
+    if (disabled) bg = (Color){25,25,25,200};
+
+    // Shadow
+    DrawRectangle(cardRect.x + 6, cardRect.y + 6, cardRect.width, cardRect.height, (Color){0,0,0,100});
+
+    DrawRectangleRec(cardRect, bg);
+    DrawRectangleLinesEx(cardRect, selected ? 3 : 2, hovered ? SKYBLUE : (Color){80,80,80,255});
+    if (selected) DrawRectangleLinesEx(cardRect, 3, GOLD);
+
+    // Art Area (Top 55%)
+    Rectangle artDst = {
+        cardRect.x + 8,
+        cardRect.y + 8,
+        cardRect.width - 16,
+        cardRect.height * 0.55f
+    };
+
+    if (art.id != 0) {
+        Rectangle src = SrcCropToFit(art, artDst.width, artDst.height);
+        DrawTexturePro(art, src, artDst, (Vector2){0,0}, 0.0f, WHITE);
+    }
+    
+    // Border around art
+    DrawRectangleLinesEx(artDst, 1, BLACK);
+
+    // Text Area
+    if (def) {
+        float tx = cardRect.x + 12;
+        float ty = artDst.y + artDst.height + 12;
+
+        // Title
+        DrawTextEx(g_ui.font, def->name, (Vector2){tx, ty}, 22, 1, RAYWHITE);
+
+        // Value / Cost
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Val: %d", def->value);
+        DrawTextEx(g_ui.font, buf, (Vector2){tx, ty + 28}, 18, 1, (Color){180,180,180,255});
+
+        snprintf(buf, sizeof(buf), "Cost: %u", def->cost);
+        DrawTextEx(g_ui.font, buf, (Vector2){tx, ty + 50}, 18, 1, YELLOW);
+    }
+
+    // Disabled Overlay
+    if (disabled) {
+        DrawRectangleRec(cardRect, (Color){0,0,0,150});
+    }
+}
+
 int main(int argc, char **argv) {
     const char *host = "127.0.0.1";
     uint16_t port = 9000;
@@ -365,14 +449,14 @@ int main(int argc, char **argv) {
         TraceLog(LOG_WARNING, "Some card textures missing. Check src/assets/cards/*.png");
     }
 
-    // Spaced out cards (Gap 40px, Width 220)
-    // Center block of 3 cards: Total W = 220*3 + 40*2 = 660 + 80 = 740.
-    // Start X = (900 - 740)/2 = 80.
-    // X Positions: 80, 80+220+40=340, 340+220+40=600.
+    // Vertical Cards: 160x220
+    // Gap 30. Total Width: 160*3 + 30*2 = 480 + 60 = 540.
+    // Center X: (900 - 540)/2 = 180.
+    // Y: 600 - 220 - 20 = 360.
     Rectangle cardRect[3] = {
-        { 80,  420, 220, 140 },
-        { 340, 420, 220, 140 },
-        { 600, 420, 220, 140 }
+        { 180,       360, 160, 220 },
+        { 180 + 190, 360, 160, 220 },
+        { 180 + 380, 360, 160, 220 }
     };
     
     // Top Right End Turn Button
@@ -399,10 +483,8 @@ int main(int argc, char **argv) {
         }
 
         // Font Sizes
-        const int SZ_TITLE = 28;
         const int SZ_HUD   = 20;
         const int SZ_LOG   = 16;
-        const int SZ_CARD  = 18;
 
         // --- LAYOUT CONSTANTS ---
         const int P_X = 40;     // Player Left Align
@@ -458,10 +540,7 @@ int main(int argc, char **argv) {
             DrawTextEx(g_ui.font, "End Turn", (Vector2){endBtn.x + 15, endBtn.y + 10}, SZ_HUD, 1, BLACK);
 
             // --- HAND & FOCUS STATES ---
-            DrawTextEx(g_ui.font, "Your Hand:", (Vector2){80, 390}, SZ_HUD, 1, LIGHTGRAY);
 
-            // --- HAND & FOCUS STATES ---
-            DrawTextEx(g_ui.font, "Your Hand:", (Vector2){80, 390}, SZ_HUD, 1, LIGHTGRAY);
 
             int n = sh.has_hand ? (sh.hand.n > 3 ? 3 : sh.hand.n) : 0;
             int hover_idx = -1;
@@ -488,25 +567,10 @@ int main(int argc, char **argv) {
                 Rectangle r = cardRect[i];
                 uint16_t cid = sh.hand.card_ids[i];
                 const card_def_t *def = get_card_def(cid);
-                
-                // Dim if AI Turn
-                Color dim = (sh.st.turn != 0) ? (Color){0,0,0,150} : (Color){0,0,0,0};
+                Texture2D tex = (def) ? tex_for_card(def->type) : (Texture2D){0};
 
-                DrawPanel((int)r.x, (int)r.y, (int)r.width, (int)r.height);
-                if (def) {
-                    Texture2D tex = tex_for_card(def->type);
-                    DrawTexturePro(tex, (Rectangle){0,0,tex.width,tex.height}, 
-                                  (Rectangle){r.x+2,r.y+2,r.width-4,r.height-4}, (Vector2){0,0}, 0, WHITE);
-                    
-                    DrawRectangle(r.x+2, r.y+2, r.width-4, 30, (Color){0,0,0,180}); 
-                    snprintf(buf, sizeof(buf), "%s (%d)", def->name, def->value);
-                    DrawTextEx(g_ui.font, buf, (Vector2){r.x+10, r.y+8}, SZ_CARD, 1, WHITE);
-                    
-                    DrawRectangle(r.x+2, r.y + r.height - 32, r.width-4, 30, (Color){0,0,0,180});
-                    snprintf(buf, sizeof(buf), "Cost: %u", def->cost);
-                    DrawTextEx(g_ui.font, buf, (Vector2){r.x+10, r.y+r.height-25}, SZ_CARD, 1, GOLD);
-                }
-                if (dim.a > 0) DrawRectangleRec(r, dim);
+                bool disabled = (sh.st.turn != 0);
+                DrawCardVertical(tex, r, def, disabled, false, false);
             }
 
             // Pass 2: Draw Hovered (if not selected)
@@ -517,29 +581,14 @@ int main(int argc, char **argv) {
                 float nw = base.width * scale;
                 float nh = base.height * scale;
                 float nx = base.x - (nw - base.width)*0.5f;
-                float ny = base.y - 30; // Float Up
+                float ny = base.y - 40; // Float Up
                 Rectangle r = {nx, ny, nw, nh};
                 
                 uint16_t cid = sh.hand.card_ids[i];
                 const card_def_t *def = get_card_def(cid);
+                Texture2D tex = (def) ? tex_for_card(def->type) : (Texture2D){0};
 
-                DrawRectangle(r.x+8, r.y+8, r.width, r.height, (Color){0,0,0,100}); // Shadow
-                DrawRectangleRec(r, (Color){60, 60, 60, 255}); // Lighter Body
-                DrawRectangleLinesEx(r, 2, WHITE);
-
-                if (def) {
-                    Texture2D tex = tex_for_card(def->type);
-                    DrawTexturePro(tex, (Rectangle){0,0,tex.width,tex.height}, 
-                                  (Rectangle){r.x+2,r.y+2,r.width-4,r.height-4}, (Vector2){0,0}, 0, WHITE);
-                    
-                    DrawRectangle(r.x+2, r.y+2, r.width-4, 32, (Color){0,0,0,200}); 
-                    snprintf(buf, sizeof(buf), "%s (%d)", def->name, def->value);
-                    DrawTextEx(g_ui.font, buf, (Vector2){r.x+12, r.y+8}, SZ_HUD, 1, WHITE);
-
-                    DrawRectangle(r.x+2, r.y + r.height - 32, r.width-4, 32, (Color){0,0,0,200});
-                    snprintf(buf, sizeof(buf), "Cost: %u", def->cost);
-                    DrawTextEx(g_ui.font, buf, (Vector2){r.x+12, r.y+r.height-28}, SZ_HUD, 1, GOLD);
-                }
+                DrawCardVertical(tex, r, def, false, true, false);
             }
 
             // Pass 3: Draw Selected (Biggest, Highest Priority)
@@ -555,59 +604,47 @@ int main(int argc, char **argv) {
                 
                 uint16_t cid = sh.hand.card_ids[i];
                 const card_def_t *def = get_card_def(cid);
+                Texture2D tex = (def) ? tex_for_card(def->type) : (Texture2D){0};
 
-                DrawRectangle(r.x+12, r.y+12, r.width, r.height, (Color){0,0,0,150}); // Deep Shadow
-                DrawRectangleRec(r, (Color){70, 70, 80, 255}); // Blue-ish Body
-                DrawRectangleLinesEx(r, 4, GOLD); // Gold Border
+                DrawCardVertical(tex, r, def, false, false, true); // Selected=true
+                
+                // Confirm Prompt above card
+                DrawRectangle(r.x, r.y - 40, r.width, 30, (Color){0,0,0,200});
+                DrawTextEx(g_ui.font, "CLICK TO CONFIRM", (Vector2){r.x + 10, r.y - 35}, 16, 1, GREEN);
 
                 if (def) {
-                    Texture2D tex = tex_for_card(def->type);
-                    DrawTexturePro(tex, (Rectangle){0,0,tex.width,tex.height}, 
-                                  (Rectangle){r.x+2,r.y+2,r.width-4,r.height-4}, (Vector2){0,0}, 0, WHITE);
-                    
-                    DrawRectangle(r.x+2, r.y+2, r.width-4, 40, (Color){0,0,0,220}); 
-                    snprintf(buf, sizeof(buf), "%s (%d)", def->name, def->value);
-                    DrawTextEx(g_ui.font, buf, (Vector2){r.x+12, r.y+10}, SZ_TITLE, 1, WHITE);
-
-                    // Confirm Prompt
-                    DrawRectangle(r.x, r.y - 40, r.width, 30, (Color){0,0,0,200});
-                    DrawTextEx(g_ui.font, "CLICK TO CONFIRM", (Vector2){r.x + 20, r.y - 35}, 20, 1, GREEN);
-
-                    DrawRectangle(r.x+2, r.y + r.height - 40, r.width-4, 40, (Color){0,0,0,220});
-                    snprintf(buf, sizeof(buf), "Cost: %u", def->cost);
-                    DrawTextEx(g_ui.font, buf, (Vector2){r.x+12, r.y+r.height-32}, SZ_TITLE, 1, GOLD);
-                    
                     // --- BIG PREVIEW PANEL (Right Side) ---
-                    // Position: Above Battle Log (approx AI_X + 25, y=75)
                     int px = AI_X + 25; 
                     int py = 75;
                     Rectangle pRect = { px, py, 220, 300 }; // Big Card Size
                     
                     // Shadow
                     DrawRectangle(px+10, py+10, 220, 300, (Color){0,0,0,120});
-                    // Body
-                    DrawRectangleRec(pRect, (Color){40, 40, 45, 255});
-                    DrawRectangleLinesEx(pRect, 3, LIGHTGRAY);
                     
-                    // Large Art
-                    DrawTexturePro(tex, (Rectangle){0,0,tex.width,tex.height}, 
-                                  (Rectangle){px+10, py+10, 200, 150}, (Vector2){0,0}, 0, WHITE);
+                    // We can reuse DrawCardVertical for the big preview card body?
+                    // Or manual for custom layout. Manual is safer for Description Text layout.
+                    DrawRectangleRec(pRect, (Color){30, 30, 35, 255});
+                    DrawRectangleLinesEx(pRect, 3, GOLD);
                     
+                    // Large Art (Center Crop)
+                    Rectangle artDst = { px + 10, py + 10, 200, 160 };
+                    Rectangle src = SrcCropToFit(tex, artDst.width, artDst.height);
+                    DrawTexturePro(tex, src, artDst, (Vector2){0,0}, 0.0f, WHITE);
+                    DrawRectangleLinesEx(artDst, 1, BLACK);
+
                     // Name
-                    DrawTextEx(g_ui.font, def->name, (Vector2){px+15, py+170}, 30, 1, GOLD);
+                    DrawTextEx(g_ui.font, def->name, (Vector2){px+15, py+180}, 24, 1, GOLD);
                     
                     // Description
                     char desc[64];
                     get_card_desc(def, desc, sizeof(desc));
-                    // Wrap text logic? For now assume it fits or simple multiline manually if needed.
-                    // Description usually short (e.g. "Deal 6 damage.")
-                    DrawTextEx(g_ui.font, desc, (Vector2){px+15, py+210}, 20, 1, WHITE);
+                    DrawTextEx(g_ui.font, desc, (Vector2){px+15, py+215}, 18, 1, WHITE);
                     
                     // Detailed Stats
                     snprintf(buf, sizeof(buf), "Cost: %u   Val: %d", def->cost, def->value);
-                    DrawTextEx(g_ui.font, buf, (Vector2){px+15, py+250}, 20, 1, LIGHTGRAY);
+                    DrawTextEx(g_ui.font, buf, (Vector2){px+15, py+260}, 18, 1, LIGHTGRAY);
                     
-                    DrawTextEx(g_ui.font, "[PREVIEW]", (Vector2){px+15, py+280}, 16, 1, GRAY);
+                    DrawTextEx(g_ui.font, "[PREVIEW]", (Vector2){px+15, py+282}, 14, 1, GRAY);
                 }
             }
             
