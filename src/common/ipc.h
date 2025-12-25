@@ -10,7 +10,7 @@ typedef struct {
 #include "proto.h"
 #include <time.h>
 
-#define MAX_SESSIONS 64
+#define MAX_SESSIONS 128
 #define STORE_MAGIC_SHM "/tcg_store_v1"
 
 typedef struct {

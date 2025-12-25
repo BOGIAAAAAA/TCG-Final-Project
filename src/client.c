@@ -1,3 +1,4 @@
+#define _DEFAULT_SOURCE
 #include "common/net.h"
 #include "common/proto.h"
 #include <stdio.h>
@@ -205,6 +206,7 @@ int main(int argc, char **argv) {
     for (int i = 0; i < threads; i++) {
         args[i] = (th_arg_t){ .host=host, .port=port, .rounds=rounds, .lat_ns_out=lats, .idx=i, .ctx=ctx };
         pthread_create(&tids[i], NULL, worker, &args[i]);
+        usleep(50000); // 50ms stagger to prevent SYN flood
     }
     for (int i = 0; i < threads; i++) pthread_join(tids[i], NULL);
 
