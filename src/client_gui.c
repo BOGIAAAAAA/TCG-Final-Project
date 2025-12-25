@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "common/net.h"
 #include "common/proto.h"
+#include "common/cards.h"
 
 #include <pthread.h>
 #include <string.h>
@@ -24,12 +25,39 @@ static ui_assets_t g_ui;
 
 static Texture2D tex_for_card(uint8_t type) {
     switch (type) {
-        case CARD_ATTACK: return g_ui.tex_atk;
-        case CARD_HEAL:   return g_ui.tex_heal;
-        case CARD_SHIELD: return g_ui.tex_shield;
-        case CARD_BUFF:   return g_ui.tex_buff;
-        case CARD_POISON: return g_ui.tex_poison;
-        default:          return g_ui.tex_atk;
+        case CT_ATK:    return g_ui.tex_atk;
+        case CT_HEAL:   return g_ui.tex_heal;
+        case CT_SHIELD: return g_ui.tex_shield;
+        case CT_BUFF:   return g_ui.tex_buff;
+        case CT_POISON: return g_ui.tex_poison;
+        default:        return g_ui.tex_atk;
+    }
+}
+
+static void get_card_desc(const card_def_t *def, char *buf, size_t len) {
+    if (!def) {
+        snprintf(buf, len, "Unknown Effect");
+        return;
+    }
+    switch (def->type) {
+        case CT_ATK:
+            snprintf(buf, len, "Deal %d damage.", def->value);
+            break;
+        case CT_HEAL:
+            snprintf(buf, len, "Restore %d HP.", def->value);
+            break;
+        case CT_SHIELD:
+            snprintf(buf, len, "Gain %d Block.", def->value);
+            break;
+        case CT_BUFF:
+            snprintf(buf, len, "Next Attack +%d.", def->value);
+            break;
+        case CT_POISON:
+            snprintf(buf, len, "Apply Poison (%d).", def->value);
+            break;
+        default:
+            snprintf(buf, len, "Effect: %d", def->value);
+            break;
     }
 }
 
@@ -70,30 +98,7 @@ typedef struct {
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static shared_t g_sh;
 
-static int recv_until(int fd, state_t *st, hand_t *hand) {
-    int got_state = 0, got_hand = 0;
-    uint8_t buf[4096];
-    uint16_t op;
-    uint32_t plen;
 
-    while (!(got_state && got_hand)) {
-        if (proto_recv(fd, &op, buf, sizeof(buf), &plen) != 0) return -1;
-
-        if (op == OP_STATE && plen == sizeof(state_t)) {
-            memcpy(st, buf, sizeof(state_t));
-            got_state = 1;
-        } else if (op == OP_HAND && plen == sizeof(hand_t)) {
-            memcpy(hand, buf, sizeof(hand_t));
-            got_hand = 1;
-        } else if (op == OP_ERROR && plen == sizeof(error_t)) {
-            // optional: could display error
-            // ignore here; UI will show state soon anyway
-        } else {
-            // ignore others
-        }
-    }
-    return 0;
-}
 
 typedef struct {
     const char *host;
@@ -122,7 +127,7 @@ static void* net_thread(void *p) {
         printf("[Net] Connected. Handshake...\n");
 
         // 2. Login or Resume
-        int logged_in = 0;
+    
         
         if (g_session_id != 0) {
              printf("[Net] Trying Resume (SID=%lu)...\n", g_session_id);
@@ -276,48 +281,10 @@ static void* net_thread(void *p) {
     return NULL;
 }
 
-static bool PointInRect(Vector2 p, Rectangle r) {
-    return (p.x >= r.x && p.x <= r.x + r.width &&
-            p.y >= r.y && p.y <= r.y + r.height);
-}
-
-static const char* card_type_name(uint8_t t) {
-    switch (t) {
-        case CARD_ATTACK: return "ATK";
-        case CARD_HEAL:   return "HEAL";
-        case CARD_SHIELD: return "SHD";
-        case CARD_BUFF:   return "BUFF";
-        case CARD_POISON: return "PSN";
-        default: return "UNK";
-    }
-}
-
-static const char* phase_name(uint8_t p) {
-    switch (p) {
-        case PHASE_DRAW: return "DRAW";
-        case PHASE_MAIN: return "MAIN";
-        case PHASE_END:  return "END";
-        default: return "???";
-    }
-}
-
 static const char* winner_name(uint8_t w) {
     if (w == 1) return "PLAYER";
     if (w == 2) return "AI";
     return "NONE";
-}
-
-static void draw_logs(const state_t *st, int x, int y) {
-    DrawText("Battle Log:", x, y, 20, DARKGRAY);
-
-    // show in chronological order (oldest -> newest)
-    // Since log_head points to next write, oldest is log_head.
-    for (int i = 0; i < LOG_LINES; i++) {
-        int idx = (st->log_head + i) % LOG_LINES;
-        const char *line = st->logs[idx];
-        if (line[0] == '\0') line = "-";
-        DrawText(line, x, y + 26 + i * 22, 18, GRAY);
-    }
 }
 
 static void DrawHPBar(int x, int y, int w, int h, int hp, int maxhp, int shield) {
@@ -411,6 +378,8 @@ int main(int argc, char **argv) {
     // Top Right End Turn Button
     Rectangle endBtn = { 900 - 140, 20, 120, 40 };
 
+    int selected_idx = -1; // Slay the Spire interaction state
+
     while (!WindowShouldClose()) {
         // snapshot shared state
         shared_t sh;
@@ -491,30 +460,154 @@ int main(int argc, char **argv) {
             // --- HAND & FOCUS STATES ---
             DrawTextEx(g_ui.font, "Your Hand:", (Vector2){80, 390}, SZ_HUD, 1, LIGHTGRAY);
 
-            int n = sh.has_hand ? (sh.hand.n > 3 ? 3 : sh.hand.n) : 0;
-            for (int i = 0; i < 3; i++) {
-                Rectangle r = cardRect[i];
-                DrawPanel((int)r.x, (int)r.y, (int)r.width, (int)r.height);
+            // --- HAND & FOCUS STATES ---
+            DrawTextEx(g_ui.font, "Your Hand:", (Vector2){80, 390}, SZ_HUD, 1, LIGHTGRAY);
 
-                if (i < n) {
-                    const card_t *c = &sh.hand.cards[i];
-                    Texture2D tex = tex_for_card(c->type);
+            int n = sh.has_hand ? (sh.hand.n > 3 ? 3 : sh.hand.n) : 0;
+            int hover_idx = -1;
+            Vector2 mouse_p = GetMousePosition();
+
+            // Detect Hover
+            if (sh.st.turn == 0 && !sh.st.game_over) {
+                for (int i = 0; i < n; i++) {
+                     if (CheckCollisionPointRec(mouse_p, cardRect[i])) {
+                         hover_idx = i;
+                         break;
+                     }
+                }
+            }
+
+            // Pass 1: Draw Non-Active Cards (Unselected & Unhovered)
+            for (int i = 0; i < 3; i++) {
+                if (i >= n) {
+                     DrawPanel((int)cardRect[i].x, (int)cardRect[i].y, (int)cardRect[i].width, (int)cardRect[i].height);
+                     continue;
+                }
+                if (i == selected_idx || i == hover_idx) continue; // Skip active
+
+                Rectangle r = cardRect[i];
+                uint16_t cid = sh.hand.card_ids[i];
+                const card_def_t *def = get_card_def(cid);
+                
+                // Dim if AI Turn
+                Color dim = (sh.st.turn != 0) ? (Color){0,0,0,150} : (Color){0,0,0,0};
+
+                DrawPanel((int)r.x, (int)r.y, (int)r.width, (int)r.height);
+                if (def) {
+                    Texture2D tex = tex_for_card(def->type);
                     DrawTexturePro(tex, (Rectangle){0,0,tex.width,tex.height}, 
-                                  (Rectangle){r.x+2, r.y+2, r.width-4, r.height-4}, 
-                                  (Vector2){0,0}, 0, WHITE);
+                                  (Rectangle){r.x+2,r.y+2,r.width-4,r.height-4}, (Vector2){0,0}, 0, WHITE);
                     
                     DrawRectangle(r.x+2, r.y+2, r.width-4, 30, (Color){0,0,0,180}); 
-                    snprintf(buf, sizeof(buf), "%s (%d)", card_type_name(c->type), c->value);
+                    snprintf(buf, sizeof(buf), "%s (%d)", def->name, def->value);
                     DrawTextEx(g_ui.font, buf, (Vector2){r.x+10, r.y+8}, SZ_CARD, 1, WHITE);
                     
                     DrawRectangle(r.x+2, r.y + r.height - 32, r.width-4, 30, (Color){0,0,0,180});
-                    snprintf(buf, sizeof(buf), "Cost: %u", c->cost);
+                    snprintf(buf, sizeof(buf), "Cost: %u", def->cost);
                     DrawTextEx(g_ui.font, buf, (Vector2){r.x+10, r.y+r.height-25}, SZ_CARD, 1, GOLD);
+                }
+                if (dim.a > 0) DrawRectangleRec(r, dim);
+            }
+
+            // Pass 2: Draw Hovered (if not selected)
+            if (hover_idx >= 0 && hover_idx != selected_idx) {
+                int i = hover_idx;
+                Rectangle base = cardRect[i];
+                float scale = 1.15f;
+                float nw = base.width * scale;
+                float nh = base.height * scale;
+                float nx = base.x - (nw - base.width)*0.5f;
+                float ny = base.y - 30; // Float Up
+                Rectangle r = {nx, ny, nw, nh};
+                
+                uint16_t cid = sh.hand.card_ids[i];
+                const card_def_t *def = get_card_def(cid);
+
+                DrawRectangle(r.x+8, r.y+8, r.width, r.height, (Color){0,0,0,100}); // Shadow
+                DrawRectangleRec(r, (Color){60, 60, 60, 255}); // Lighter Body
+                DrawRectangleLinesEx(r, 2, WHITE);
+
+                if (def) {
+                    Texture2D tex = tex_for_card(def->type);
+                    DrawTexturePro(tex, (Rectangle){0,0,tex.width,tex.height}, 
+                                  (Rectangle){r.x+2,r.y+2,r.width-4,r.height-4}, (Vector2){0,0}, 0, WHITE);
                     
-                    // IF AI TURN (Focused away) -> Dim Hand
-                    if (sh.st.turn != 0) {
-                        DrawRectangleRec(r, (Color){0, 0, 0, 150}); // Dim overlay
-                    }
+                    DrawRectangle(r.x+2, r.y+2, r.width-4, 32, (Color){0,0,0,200}); 
+                    snprintf(buf, sizeof(buf), "%s (%d)", def->name, def->value);
+                    DrawTextEx(g_ui.font, buf, (Vector2){r.x+12, r.y+8}, SZ_HUD, 1, WHITE);
+
+                    DrawRectangle(r.x+2, r.y + r.height - 32, r.width-4, 32, (Color){0,0,0,200});
+                    snprintf(buf, sizeof(buf), "Cost: %u", def->cost);
+                    DrawTextEx(g_ui.font, buf, (Vector2){r.x+12, r.y+r.height-28}, SZ_HUD, 1, GOLD);
+                }
+            }
+
+            // Pass 3: Draw Selected (Biggest, Highest Priority)
+            if (selected_idx >= 0 && selected_idx < n) {
+                int i = selected_idx;
+                Rectangle base = cardRect[i];
+                float scale = 1.30f;
+                float nw = base.width * scale;
+                float nh = base.height * scale;
+                float nx = base.x - (nw - base.width)*0.5f;
+                float ny = base.y - 80; // Float WAY Up
+                Rectangle r = {nx, ny, nw, nh};
+                
+                uint16_t cid = sh.hand.card_ids[i];
+                const card_def_t *def = get_card_def(cid);
+
+                DrawRectangle(r.x+12, r.y+12, r.width, r.height, (Color){0,0,0,150}); // Deep Shadow
+                DrawRectangleRec(r, (Color){70, 70, 80, 255}); // Blue-ish Body
+                DrawRectangleLinesEx(r, 4, GOLD); // Gold Border
+
+                if (def) {
+                    Texture2D tex = tex_for_card(def->type);
+                    DrawTexturePro(tex, (Rectangle){0,0,tex.width,tex.height}, 
+                                  (Rectangle){r.x+2,r.y+2,r.width-4,r.height-4}, (Vector2){0,0}, 0, WHITE);
+                    
+                    DrawRectangle(r.x+2, r.y+2, r.width-4, 40, (Color){0,0,0,220}); 
+                    snprintf(buf, sizeof(buf), "%s (%d)", def->name, def->value);
+                    DrawTextEx(g_ui.font, buf, (Vector2){r.x+12, r.y+10}, SZ_TITLE, 1, WHITE);
+
+                    // Confirm Prompt
+                    DrawRectangle(r.x, r.y - 40, r.width, 30, (Color){0,0,0,200});
+                    DrawTextEx(g_ui.font, "CLICK TO CONFIRM", (Vector2){r.x + 20, r.y - 35}, 20, 1, GREEN);
+
+                    DrawRectangle(r.x+2, r.y + r.height - 40, r.width-4, 40, (Color){0,0,0,220});
+                    snprintf(buf, sizeof(buf), "Cost: %u", def->cost);
+                    DrawTextEx(g_ui.font, buf, (Vector2){r.x+12, r.y+r.height-32}, SZ_TITLE, 1, GOLD);
+                    
+                    // --- BIG PREVIEW PANEL (Right Side) ---
+                    // Position: Above Battle Log (approx AI_X + 25, y=75)
+                    int px = AI_X + 25; 
+                    int py = 75;
+                    Rectangle pRect = { px, py, 220, 300 }; // Big Card Size
+                    
+                    // Shadow
+                    DrawRectangle(px+10, py+10, 220, 300, (Color){0,0,0,120});
+                    // Body
+                    DrawRectangleRec(pRect, (Color){40, 40, 45, 255});
+                    DrawRectangleLinesEx(pRect, 3, LIGHTGRAY);
+                    
+                    // Large Art
+                    DrawTexturePro(tex, (Rectangle){0,0,tex.width,tex.height}, 
+                                  (Rectangle){px+10, py+10, 200, 150}, (Vector2){0,0}, 0, WHITE);
+                    
+                    // Name
+                    DrawTextEx(g_ui.font, def->name, (Vector2){px+15, py+170}, 30, 1, GOLD);
+                    
+                    // Description
+                    char desc[64];
+                    get_card_desc(def, desc, sizeof(desc));
+                    // Wrap text logic? For now assume it fits or simple multiline manually if needed.
+                    // Description usually short (e.g. "Deal 6 damage.")
+                    DrawTextEx(g_ui.font, desc, (Vector2){px+15, py+210}, 20, 1, WHITE);
+                    
+                    // Detailed Stats
+                    snprintf(buf, sizeof(buf), "Cost: %u   Val: %d", def->cost, def->value);
+                    DrawTextEx(g_ui.font, buf, (Vector2){px+15, py+250}, 20, 1, LIGHTGRAY);
+                    
+                    DrawTextEx(g_ui.font, "[PREVIEW]", (Vector2){px+15, py+280}, 16, 1, GRAY);
                 }
             }
             
@@ -553,30 +646,53 @@ int main(int argc, char **argv) {
         Vector2 mp = GetMousePosition();
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) &&
             sh.connected && sh.has_state && sh.has_hand && !sh.st.game_over && sh.st.turn == 0) {
-
+            
             if (na.fd_out >= 0) {
-                // End turn
+                int clicked_card_idx = -1;
+                
+                // End turn check
                 if (CheckCollisionPointRec(mp, endBtn)) {
                     proto_send(na.fd_out, OP_END_TURN, NULL, 0);
+                    selected_idx = -1; // Reset selection on End Turn
                 } else {
-                    // play card by index
+                    // Check cards
                     int n = sh.has_hand ? (sh.hand.n > 3 ? 3 : sh.hand.n) : 0;
                     for (int i = 0; i < n; i++) {
                         if (CheckCollisionPointRec(mp, cardRect[i])) {
-                            play_req_t pr;
-                            pr.hand_idx = (uint8_t)i;
-                            
-                            // start anim (card flies to AI area)
-                            g_anim.active = 1;
-                            g_anim.t = 0.0f;
-                            g_anim.dur = 0.30f;
-                            g_anim.from = (Vector2){ cardRect[i].x + cardRect[i].width*0.5f, cardRect[i].y + cardRect[i].height*0.5f };
-                            g_anim.to   = (Vector2){ AI_X + 50, HP_Y + 10 }; 
-                            snprintf(g_anim.text, sizeof(g_anim.text), "PLAY");
-
-                            proto_send(na.fd_out, OP_PLAY_CARD, &pr, sizeof(pr));
+                            clicked_card_idx = i;
                             break;
                         }
+                    }
+
+                    if (clicked_card_idx >= 0) {
+                        // Clicked a card
+                        if (clicked_card_idx == selected_idx) {
+                            // CONFIRMATION - PLAY CARD
+                            play_req_t pr;
+                            pr.hand_idx = (uint8_t)clicked_card_idx;
+                            
+                            // Animation
+                            uint16_t cid = sh.hand.card_ids[clicked_card_idx];
+                            const card_def_t *def = get_card_def(cid);
+                            
+                            g_anim.active = 1;
+                            g_anim.t = 0.0f;
+                            g_anim.dur = 0.50f; // Slower for effect
+                            g_anim.from = (Vector2){ cardRect[clicked_card_idx].x + 110, cardRect[clicked_card_idx].y + 70 };
+                            g_anim.to   = (Vector2){ AI_X + 50, HP_Y + 10 }; 
+                            
+                            snprintf(g_anim.text, sizeof(g_anim.text), "%s", def ? def->name : "PLAY");
+
+                            proto_send(na.fd_out, OP_PLAY_CARD, &pr, sizeof(pr));
+                            
+                            selected_idx = -1; // Deselect after playing
+                        } else {
+                            // SELECTION
+                            selected_idx = clicked_card_idx;
+                        }
+                    } else {
+                        // Clicked Empty Space -> Deselect
+                        selected_idx = -1;
                     }
                 }
             }

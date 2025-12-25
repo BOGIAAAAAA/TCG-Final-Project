@@ -2,12 +2,12 @@ CC=gcc
 CFLAGS=-O2 -Wall -Wextra -std=c11 -pthread
 LDFLAGS=-pthread -lrt
 
-COMMON_OBJ=src/common/proto.o src/common/net.o src/common/ipc.o
+LIBCOMMON_OBJS=src/common/proto.o src/common/net.o src/common/ipc.o src/common/cards.o
 COMMON_LIB=libcommon.a
 
 all: server client client_gui
 
-$(COMMON_LIB): $(COMMON_OBJ)
+$(COMMON_LIB): $(LIBCOMMON_OBJS)
 	ar rcs $@ $^
 
 server: src/server.o $(COMMON_LIB)

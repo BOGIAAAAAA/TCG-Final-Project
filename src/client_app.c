@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "common/net.h"
 #include "common/proto.h"
+#include "common/cards.h"
 
 #include <ncursesw/ncurses.h>
 #include <string.h>
@@ -49,7 +50,13 @@ static void draw_ui(const state_t *st, const hand_t *hand) {
     mvprintw(10, 2, "Hand:");
     int n = (hand->n > 8) ? 8 : hand->n;
     for (int i = 0; i < n; i++) {
-        mvprintw(11 + i, 4, "%d) CardID=%u  Value=%d", i + 1, hand->cards[i].id, hand->cards[i].value);
+        uint16_t cid = hand->card_ids[i];
+        const card_def_t *def = get_card_def(cid);
+        if (def) {
+            mvprintw(11 + i, 4, "%d) %s (Cost %u, Val %d)", i + 1, def->name, def->cost, def->value);
+        } else {
+            mvprintw(11 + i, 4, "%d) Unknown Card %u", i + 1, cid);
+        }
     }
 
     mvprintw(20, 2, "Action: ");

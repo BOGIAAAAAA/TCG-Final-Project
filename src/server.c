@@ -83,35 +83,17 @@ static void check_game_over(state_t *st) {
     }
 }
 
-static card_t rand_card(void) {
-    // Card pool (id, type, cost, value)
-    // value meaning:
-    //  ATK: dmg, HEAL: heal, SHIELD: shield, BUFF: next atk +X, POISON: poison turns to add
-    static const card_t pool[] = {
-        {100, CARD_ATTACK, 1, 3, 0},
-        {101, CARD_ATTACK, 2, 5, 0},
-        {102, CARD_ATTACK, 3, 8, 0},
+#include "common/cards.h"
 
-        {200, CARD_HEAL,   2, 4, 0},
-        {201, CARD_HEAL,   3, 7, 0},
-
-        {300, CARD_SHIELD, 1, 3, 0},
-        {301, CARD_SHIELD, 2, 6, 0},
-
-        {400, CARD_BUFF,   1, 2, 0},
-        {401, CARD_BUFF,   2, 4, 0},
-
-        {500, CARD_POISON, 2, 2, 0}, // add 2 turns poison
-        {501, CARD_POISON, 3, 3, 0}, // add 3 turns poison
-    };
-    int n = (int)(sizeof(pool) / sizeof(pool[0]));
-    return pool[rand() % n];
+static uint16_t rand_card_id(void) {
+    // Valid IDs are 1..11
+    return (uint16_t)((rand() % 11) + 1);
 }
 
 static void deal_hand(hand_t *h) {
     memset(h, 0, sizeof(*h));
     h->n = 3;
-    for (int i = 0; i < 3; i++) h->cards[i] = rand_card();
+    for (int i = 0; i < 3; i++) h->card_ids[i] = rand_card_id();
 }
 
 static int err_send(int fd, int32_t code, const char *msg) {
@@ -127,12 +109,18 @@ static int err_send(int fd, int32_t code, const char *msg) {
 
 static int handle_play_card(state_t *st, hand_t *hand, int is_player, uint8_t idx) {
     if (idx >= hand->n) return -1;
+    
+    // Look up ID
+    uint16_t cid = hand->card_ids[idx];
+    // Check if valid/already played (0 = empty/played)
+    if (cid == 0) return -3;
 
-    card_t c = hand->cards[idx];
+    const card_def_t *c = get_card_def(cid);
+    if (!c) return -3;
 
     // MVP: st->mana is the mana of current turn owner.
-    if (c.cost > st->mana) return -2;
-    st->mana = (uint8_t)(st->mana - c.cost);
+    if (c->cost > st->mana) return -2;
+    st->mana = (uint8_t)(st->mana - c->cost);
 
     int16_t *self_hp     = is_player ? &st->p_hp     : &st->ai_hp;
     int16_t *enemy_hp    = is_player ? &st->ai_hp    : &st->p_hp;
@@ -141,34 +129,34 @@ static int handle_play_card(state_t *st, hand_t *hand, int is_player, uint8_t id
     int16_t *self_buff   = is_player ? &st->p_buff   : &st->ai_buff;
     uint8_t *enemy_poison= is_player ? &st->ai_poison : &st->p_poison;
 
-    switch (c.type) {
-        case CARD_ATTACK: {
-            int dmg = (int)c.value + (int)(*self_buff);
+    switch (c->type) {
+        case CT_ATK: {
+            int dmg = (int)c->value + (int)(*self_buff);
             *self_buff = 0; // consume buff
             apply_damage(enemy_hp, enemy_shield, dmg);
             push_log(st, "%s %s (%d) [mana %u]", is_player ? "P" : "AI",
                      "ATK", dmg, st->mana);
         } break;
-        case CARD_HEAL: {
-            *self_hp = (int16_t)(*self_hp + c.value);
+        case CT_HEAL: {
+            *self_hp = (int16_t)(*self_hp + c->value);
             push_log(st, "%s HEAL (+%d) [mana %u]", is_player ? "P" : "AI",
-                     (int)c.value, st->mana);
+                     (int)c->value, st->mana);
         } break;
-        case CARD_SHIELD: {
-            *self_shield = (int16_t)(*self_shield + c.value);
+        case CT_SHIELD: {
+            *self_shield = (int16_t)(*self_shield + c->value);
             push_log(st, "%s SHIELD (+%d) [mana %u]", is_player ? "P" : "AI",
-                     (int)c.value, st->mana);
+                     (int)c->value, st->mana);
         } break;
-        case CARD_BUFF: {
-            *self_buff = (int16_t)(*self_buff + c.value);
+        case CT_BUFF: {
+            *self_buff = (int16_t)(*self_buff + c->value);
             push_log(st, "%s BUFF (+%d next) [mana %u]", is_player ? "P" : "AI",
-                     (int)c.value, st->mana);
+                     (int)c->value, st->mana);
         } break;
-        case CARD_POISON: {
+        case CT_POISON: {
             // add turns to enemy poison
-            *enemy_poison = (uint8_t)(*enemy_poison + (uint8_t)c.value);
-            push_log(st, "%s POISON (+%d turns) [mana %u]", is_player ? "P" : "AI",
-                     (int)c.value, st->mana);
+            *enemy_poison = (uint8_t)(*enemy_poison + (uint8_t)c->value);
+            push_log(st, "%s POISON (+%d) [mana %u]", is_player ? "P" : "AI",
+                     (int)c->value, st->mana);
         } break;
         default:
             return -3;
@@ -222,28 +210,28 @@ static void phase_end(state_t *st, hand_t *hand) {
     enter_turn(st, hand, next_side);
 }
 
-static int ai_eval_card(const state_t *st, const card_t *c) {
+static int ai_eval_card(const state_t *st, const card_def_t *c) {
     int score = 0;
 
     // Survival priority (HP < 10)
     if (st->ai_hp < 10) {
-        if (c->type == CARD_HEAL) score += 100;
+        if (c->type == CT_HEAL) score += 100;
     }
 
     // Counter-play: Break player shield
     if (st->p_shield > 0) {
-        if (c->type == CARD_BUFF) score += 40;
+        if (c->type == CT_BUFF) score += 40;
     }
 
     switch (c->type) {
-        case CARD_ATTACK:
+        case CT_ATK:
             score += c->value;
             break;
-        case CARD_POISON:
+        case CT_POISON:
             // Early poison is better
             if (st->p_poison == 0) score += 30;
             break;
-        case CARD_SHIELD:
+        case CT_SHIELD:
             if (st->ai_shield == 0) score += 20;
             break;
         default: break;
@@ -266,9 +254,15 @@ static void process_ai_turn(state_t *st, hand_t *hand) {
         int best_score = -9999;
 
         for (int i = 0; i < hand->n; i++) {
-            // Check if card is playable (cost <= mana) and not already used (cost != 255)
-            if (hand->cards[i].cost <= st->mana) {
-                int score = ai_eval_card(st, &hand->cards[i]);
+            uint16_t cid = hand->card_ids[i];
+            if (cid == 0) continue; // Already played
+            
+            const card_def_t *c = get_card_def(cid);
+            if (!c) continue;
+
+            // Check if card is playable (cost <= mana)
+            if (c->cost <= st->mana) {
+                int score = ai_eval_card(st, c);
                 if (score > best_score) {
                     best_score = score;
                     best_idx = i;
@@ -283,8 +277,8 @@ static void process_ai_turn(state_t *st, hand_t *hand) {
                 // Should not happen if logic is correct, but break to avoid loop
                 break;
             }
-            // Mark as used
-             hand->cards[best_idx].cost = 255; 
+            // Mark as used (set ID to 0)
+             hand->card_ids[best_idx] = 0; 
         } else {
             // No more playable cards
             break; 
