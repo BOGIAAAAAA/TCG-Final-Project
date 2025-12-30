@@ -68,7 +68,6 @@ The stress test is designed to validate the following aspects:
 2. Each client connection is handled by a worker process
 3. Shared statistics are maintained using shared memory IPC
 4. Server logic remains authoritative during the test
-
 ### Test Environment
 1. OS: Ubuntu Linux
 2. Architecture: POSIX-compliant system
@@ -84,7 +83,6 @@ The stress test is designed to validate the following aspects:
 ```bash
 ./server 9000
 ```
-
 #### 2. Run the Stress Test Client
 ```bash
 ./client <threads> <rounds> <server_ip> <port>
@@ -104,7 +102,6 @@ Parameters:
 threads=100 rounds=5 ok=100 fail=0
 latency(sum per thread) avg=3.236 ms min=0.748 ms max=6.108 ms
 ```
-
 #### Output Explanation
 1. threads: Total number of concurrent clients
 2. rounds: Requests sent per client
