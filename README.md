@@ -121,23 +121,23 @@ monitor is a runtime monitoring utility designed for the server-side of our high
 
 ### Purpose
 The monitor tool is designed to achieve the following goals:
-•	Observe server activity without interfering with execution
-•	Validate correct usage of inter-process communication (IPC)
-•	Provide real-time insight into:
-	•	Active connections
-	•	Total processed packets
-•	Assist debugging during stress testing and demo sessions
+*   Observe server activity without interfering with execution
+*   Validate correct usage of inter-process communication (IPC)
+*   Provide real-time insight into:
+	*   Active connections
+	*   Total processed packets
+*   Assist debugging during stress testing and demo sessions
 
 ### Architecture
 #### IPC Mechanism
-•	The server maintains runtime statistics using POSIX shared memory
-•	All worker processes update shared counters
-•	monitor attaches to the same shared memory region in read-only mode
+*   The server maintains runtime statistics using POSIX shared memory
+*   All worker processes update shared counters
+*   monitor attaches to the same shared memory region in read-only mode
 
 This design ensures:
-•	Low overhead
-•	No synchronization interference
-•	Safe concurrent access
+*   Low overhead
+*   No synchronization interference
+*   Safe concurrent access
 
 ### Monitored Metrics
 The monitor displays the following runtime information:
@@ -170,19 +170,19 @@ Packets:     3421
 ```
 
 ### Use Cases
-•	Live demonstration during project presentation
-•	Verifying server behavior during stress testing
-•	Confirming IPC correctness and synchronization
-•	Debugging abnormal connection or packet growth
+*   Live demonstration during project presentation
+*   Verifying server behavior during stress testing
+*   Confirming IPC correctness and synchronization
+*   Debugging abnormal connection or packet growth
 
 ### Implementation Notes
-•	Implemented in C (POSIX-compliant)
-•	Uses:
-	•	shm_open
-	•	mmap
-	•	Shared memory synchronization primitives
-•	No network sockets are used by the monitor
-•	Can be started or stopped independently of the server
+*   Implemented in C (POSIX-compliant)
+*   Uses:
+	*   shm_open
+	*   mmap
+	*   Shared memory synchronization primitives
+*   No network sockets are used by the monitor
+*   Can be started or stopped independently of the server
 
 ## Quick Start
 
