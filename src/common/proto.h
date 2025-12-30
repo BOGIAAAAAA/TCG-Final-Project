@@ -51,42 +51,41 @@ typedef struct {
 
 /* ---------------------------
  *  Game Protocol v2 (MVP+)
- *  - Cards are data-driven
- *  - Client sends only hand index (anti-cheat)
- *  - Server is authoritative for effects
- * --------------------------*/
+ * ---------------------------
+ */
 
+#define LOG_LINES 6
+#define LOG_LEN   64
+
+/* Card Types */
 typedef enum {
-    CARD_ATTACK = 1,
-    CARD_HEAL   = 2,
-    CARD_SHIELD = 3,
-    CARD_BUFF   = 4,
-    CARD_POISON = 5,
+    CT_ATK = 1,
+    CT_HEAL,
+    CT_SHIELD,
+    CT_BUFF,
+    CT_POISON
 } card_type_t;
 
-#pragma pack(push, 1)
+/* Card Definition (Static Data) */
 typedef struct {
-    uint16_t id;      // card id
+    uint16_t id;
     uint8_t  type;    // card_type_t
-    uint8_t  cost;    // mana cost
-    int16_t  value;   // effect value (dmg/heal/shield/buff/poison)
-    uint16_t flags;   // reserved for extension
-} card_t;
-#pragma pack(pop)
+    uint8_t  cost;
+    int16_t  value;   // dmg/heal/shield/buff_val
+    uint8_t  duration;
+    const char *name;
+} card_def_t;
 
-#define MAX_HAND 8
+/* Hand (Instance Data) - NOW USES IDs */
 #pragma pack(push, 1)
 typedef struct {
-    uint8_t n;                 // number of cards
-    uint8_t reserved;          // keep alignment stable
-    card_t  cards[MAX_HAND];
+    uint8_t n;
+    uint16_t card_ids[8]; // Max 8, server sends IDs
 } hand_t;
-#pragma pack(pop)
 
-// client->server play request (hand index only)
-#pragma pack(push, 1)
+/* Play Card Request */
 typedef struct {
-    uint8_t hand_idx;          // 0..hand.n-1
+    uint8_t hand_idx;  // 0..n-1
 } play_req_t;
 #pragma pack(pop)
 
@@ -142,7 +141,8 @@ typedef struct {
 uint16_t proto_checksum16(const void *buf, size_t n);
 
 // pack & send / recv helpers
-/* han edit tls */
-int proto_send(int fd, SSL *ssl, uint16_t opcode, const void *payload, uint32_t payload_len);
-int proto_recv(int fd, SSL *ssl, uint16_t *opcode_out, void *payload_buf, uint32_t payload_buf_cap, uint32_t *payload_len_out);
-/* han edit tls end */
+// pack & send / recv helpers
+#include "net.h"
+int proto_send(connection_t *c, uint16_t opcode, const void *payload, uint32_t payload_len);
+int proto_recv(connection_t *c, uint16_t *opcode_out, void *payload_buf, uint32_t payload_buf_cap, uint32_t *payload_len_out);
+

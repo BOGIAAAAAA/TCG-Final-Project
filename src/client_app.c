@@ -1,32 +1,23 @@
 #define _POSIX_C_SOURCE 200809L
 #include "common/net.h"
 #include "common/proto.h"
-#include <errno.h>
+#include "common/cards.h"
 
 #include <ncursesw/ncurses.h>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <openssl/ssl.h>
 
-static int recv_until(int fd, SSL *ssl, state_t *st, hand_t *hand) {
-
+static int recv_until(connection_t *conn, state_t *st, hand_t *hand) {
     int got_state = 0, got_hand = 0;
     uint8_t buf[2048];
     uint16_t op;
     uint32_t plen;
 
     while (!(got_state && got_hand)) {
-        /* han edit tls */
-        if (proto_recv(fd, ssl, &op, buf, sizeof(buf), &plen) != 0) {
-        /* han edit tls end */
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-               endwin(); fprintf(stderr, "[client] Receive timeout (waited > 3s)\n");
-            } else {
-               endwin(); perror("[client] recv error");
-            }
-            return -1;
-        }
+        if (proto_recv(conn, &op, buf, sizeof(buf), &plen) != 0) return -1;
 
         if (op == OP_STATE && plen == sizeof(state_t)) {
             memcpy(st, buf, sizeof(state_t));
@@ -34,8 +25,10 @@ static int recv_until(int fd, SSL *ssl, state_t *st, hand_t *hand) {
         } else if (op == OP_HAND && plen == sizeof(hand_t)) {
             memcpy(hand, buf, sizeof(hand_t));
             got_hand = 1;
+        } else if (op == OP_LOGIN_RESP || op == OP_RESUME_RESP) {
+            // consume
         } else {
-            // ignore OP_LOGIN_RESP / OP_ERROR / unknown
+            // ignore
         }
     }
     return 0;
@@ -60,7 +53,13 @@ static void draw_ui(const state_t *st, const hand_t *hand) {
     mvprintw(10, 2, "Hand:");
     int n = (hand->n > 8) ? 8 : hand->n;
     for (int i = 0; i < n; i++) {
-        mvprintw(11 + i, 4, "%d) CardID=%u  Value=%d", i + 1, hand->cards[i].id, hand->cards[i].value);
+        uint16_t cid = hand->card_ids[i];
+        const card_def_t *def = get_card_def(cid);
+        if (def) {
+            mvprintw(11 + i, 4, "%d) %s (Cost %u, Val %d)", i + 1, def->name, def->cost, def->value);
+        } else {
+            mvprintw(11 + i, 4, "%d) Unknown Card %u", i + 1, cid);
+        }
     }
 
     mvprintw(20, 2, "Action: ");
@@ -68,9 +67,13 @@ static void draw_ui(const state_t *st, const hand_t *hand) {
 }
 
 int run_app_mode(const char *host, uint16_t port) {
+    SSL_CTX *ctx = ssl_init_client_ctx();
+    if (!ctx) return 1;
+
     int fd = tcp_connect(host, port);
     if (fd < 0) {
         perror("tcp_connect");
+        SSL_CTX_free(ctx);
         return 1;
     }
     
@@ -90,25 +93,36 @@ int run_app_mode(const char *host, uint16_t port) {
     }
     /* han edit tls end */
 
-    // login
-    /* han edit tls */
-    if (proto_send(fd, ssl, OP_LOGIN_REQ, NULL, 0) != 0) {
-        SSL_shutdown(ssl); SSL_free(ssl); SSL_CTX_free(ctx);
+    // SSL Handshake
+    SSL *ssl = SSL_new(ctx);
+    SSL_set_fd(ssl, fd);
+    if (SSL_connect(ssl) <= 0) {
+        ERR_print_errors_fp(stderr);
+        SSL_free(ssl);
         close(fd);
+        SSL_CTX_free(ctx);
         return 1;
     }
-    /* han edit tls end */
+
+    connection_t conn;
+    conn_init(&conn, fd, ssl);
+
+    // login
+    if (proto_send(&conn, OP_LOGIN_REQ, NULL, 0) != 0) {
+        conn_close(&conn);
+        SSL_CTX_free(ctx);
+        return 1;
+    }
 
     state_t st;
     hand_t hand;
     memset(&st, 0, sizeof(st));
     memset(&hand, 0, sizeof(hand));
 
-    // Receive initial STATE + HAND
-    /* han edit tls */
-    if (recv_until(fd, ssl, &st, &hand) != 0) {
-        SSL_shutdown(ssl); SSL_free(ssl); SSL_CTX_free(ctx);
-        close(fd);
+    // Receive initial STATE + HAND (consumes login resp implicitly via loop)
+    if (recv_until(&conn, &st, &hand) != 0) {
+        conn_close(&conn);
+        SSL_CTX_free(ctx);
         return 1;
     }
     /* han edit tls end */
@@ -132,10 +146,8 @@ int run_app_mode(const char *host, uint16_t port) {
         }
 
         if (ch == 'e' || ch == 'E') {
-            /* han edit tls */
-            if (proto_send(fd, ssl, OP_END_TURN, NULL, 0) != 0) break;
-            if (recv_until(fd, ssl, &st, &hand) != 0) break;
-            /* han edit tls end */
+            if (proto_send(&conn, OP_END_TURN, NULL, 0) != 0) break;
+            if (recv_until(&conn, &st, &hand) != 0) break;
             continue;
         }
 
@@ -146,22 +158,14 @@ int run_app_mode(const char *host, uint16_t port) {
             play_req_t pc;
             pc.hand_idx = (uint8_t)idx;
 
-            pc.hand_idx = (uint8_t)idx;
-
-            /* han edit tls */
-            if (proto_send(fd, ssl, OP_PLAY_CARD, &pc, sizeof(pc)) != 0) break;
-            if (recv_until(fd, ssl, &st, &hand) != 0) break;
-            /* han edit tls end */
+            if (proto_send(&conn, OP_PLAY_CARD, &pc, sizeof(pc)) != 0) break;
+            if (recv_until(&conn, &st, &hand) != 0) break;
             continue;
         }
     }
 
     endwin();
-    /* han edit tls */
-    SSL_shutdown(ssl);
-    SSL_free(ssl);
+    conn_close(&conn);
     SSL_CTX_free(ctx);
-    /* han edit tls end */
-    close(fd);
     return 0;
 }

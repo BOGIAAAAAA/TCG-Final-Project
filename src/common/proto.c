@@ -11,9 +11,9 @@ uint16_t proto_checksum16(const void *buf, size_t n) {
     return (uint16_t)(~sum);
 }
 
-/* han edit tls */
-int proto_send(int fd, SSL *ssl, uint16_t opcode, const void *payload, uint32_t payload_len) {
-/* han edit tls end */
+int proto_send(connection_t *c, uint16_t opcode, const void *payload, uint32_t payload_len) {
+    if (!c) return -1;
+
     pkt_hdr_t h;
     uint32_t total_len = (uint32_t)sizeof(h) + payload_len;
 
@@ -22,7 +22,7 @@ int proto_send(int fd, SSL *ssl, uint16_t opcode, const void *payload, uint32_t 
     h.cksum = htons(0);
 
     // build temp buffer for checksum
-    uint8_t stackbuf[2048];
+    uint8_t stackbuf[4096]; // increased size just in case
     uint8_t *buf = stackbuf;
     if (total_len > sizeof(stackbuf)) return -1; // keep it simple for MVP
 
@@ -33,29 +33,17 @@ int proto_send(int fd, SSL *ssl, uint16_t opcode, const void *payload, uint32_t 
     uint16_t cks = proto_checksum16(buf, total_len);
     ((pkt_hdr_t*)buf)->cksum = htons(cks);
 
-    // write out
-    // write out
-    /* han edit tls */
-    if (ssl) {
-        if (ssl_writen(ssl, buf, total_len) != (ssize_t)total_len) return -1;
-    } else {
-        if (writen(fd, buf, total_len) != (ssize_t)total_len) return -1;
-    }
-    /* han edit tls end */
+    // write out using conn_writen
+    if (conn_writen(c, buf, total_len) != (ssize_t)total_len) return -1;
     return 0;
 }
 
-/* han edit tls */
-int proto_recv(int fd, SSL *ssl, uint16_t *opcode_out, void *payload_buf, uint32_t payload_buf_cap, uint32_t *payload_len_out) {
-/* han edit tls end */
+int proto_recv(connection_t *c, uint16_t *opcode_out, void *payload_buf, uint32_t payload_buf_cap, uint32_t *payload_len_out) {
+    if (!c) return -1;
+
     pkt_hdr_t h;
-    /* han edit tls */
-    ssize_t r = 0;
-    if (ssl) r = ssl_readn(ssl, &h, sizeof(h));
-    else r = readn(fd, &h, sizeof(h));
-    
-    if (r != (ssize_t)sizeof(h)) return -1;
-    /* han edit tls end */
+    // read header using conn_readn
+    if (conn_readn(c, &h, sizeof(h)) != (ssize_t)sizeof(h)) return -1;
 
     uint32_t total_len = ntohl(h.len);
     uint16_t opcode = ntohs(h.opcode);
@@ -65,17 +53,11 @@ int proto_recv(int fd, SSL *ssl, uint16_t *opcode_out, void *payload_buf, uint32
 
     uint32_t payload_len = total_len - (uint32_t)sizeof(h);
     if (payload_len) {
-        /* han edit tls */
-        if (ssl) {
-             if (ssl_readn(ssl, payload_buf, payload_len) != (ssize_t)payload_len) return -1;
-        } else {
-             if (readn(fd, payload_buf, payload_len) != (ssize_t)payload_len) return -1;
-        }
-        /* han edit tls end */
+        if (conn_readn(c, payload_buf, payload_len) != (ssize_t)payload_len) return -1;
     }
 
     // verify checksum
-    uint8_t stackbuf[2048];
+    uint8_t stackbuf[4096];
     uint8_t *buf = stackbuf;
     if (total_len > sizeof(stackbuf)) return -1;
 
