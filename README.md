@@ -55,29 +55,29 @@ The stress test is designed to validate the following aspects:
 ### Test Architecture
 
 #### Client Side (Load Generator)
-	1. Implemented using a multi-threaded architecture
-	2. Each thread acts as an independent client
-	3. Each client:
-	  •	Connects to the server
-	  •	Performs a login handshake
-	4. Repeatedly sends gameplay requests
-	5. Latency is measured per thread
+1. Implemented using a multi-threaded architecture
+2. Each thread acts as an independent client
+3. Each client:
+	• Connects to the server
+	• Performs a login handshake
+4. Repeatedly sends gameplay requests
+5. Latency is measured per thread
 
 #### Server Side
-	1. Uses a multi-process (fork-based) architecture
-	2. Each client connection is handled by a worker process
-	3. Shared statistics are maintained using shared memory IPC
-	4. Server logic remains authoritative during the test
+1. Uses a multi-process (fork-based) architecture
+2. Each client connection is handled by a worker process
+3. Shared statistics are maintained using shared memory IPC
+4. Server logic remains authoritative during the test
 
 ### Test Environment
-	•	OS: Ubuntu Linux
-	•	Architecture: POSIX-compliant system
-	•	Compiler: GCC
-	•	Networking: TCP sockets
-	•	IPC: POSIX shared memory
-	•	Concurrency Model:
-	•	Client: multi-threaded
-	•	Server: multi-process
+1. OS: Ubuntu Linux
+2. Architecture: POSIX-compliant system
+3. Compiler: GCC
+4. Networking: TCP sockets
+5. IPC: POSIX shared memory
+6. Concurrency Model:
+7. Client: multi-threaded
+8. Server: multi-process
 
 ## Quick Start
 
