@@ -28,20 +28,20 @@ Please ensure the OpenSSL development package is installed before compiling:
 sudo apt install libssl-dev
 ```
 
-### 2. 產生憑證 (Generate Certificates)
-在啟動伺服器前，必須先產生測試用的自簽憑證 (`server.crt`, `server.key`)：
+### 2. Generate Certificates
+Before starting the server, you must generate self-signed certificates (server.crt and server.key) for testing purposes:
 ```bash
 ./gen_certs.sh
 ```
 
-### 3. 使用 Wireshark 驗證 (Verification)
-您可以透過 Wireshark 觀察封包，確認通訊已加密：
-1. 開啟 Wireshark 並監聽 Loopback (lo) 介面。
-2. 設定過濾器：`tcp.port == 9000`。
-3. 執行伺服器與客戶端。
-4. 您將會看到 `Client Hello`, `Server Hello`, `Application Data` 等 TLS 封包，而非明文的遊戲指令。
+### 3. Verification via Wireshark
+You can use Wireshark to inspect packets and confirm that the communication is encrypted:
+1. Open Wireshark and capture traffic on the Loopback (lo) interface.
+2. Set the display filter to: tcp.port == 9000.
+3. Run the server and client.
+4. You will observe TLS packets (e.g., Client Hello, Server Hello, Application Data) instead of plaintext game commands.
 
-## 快速開始 (Quick Start)
+## Quick Start
 
 ### 1. 編譯專案 (Build)
 ```bash
