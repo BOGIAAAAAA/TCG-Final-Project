@@ -94,11 +94,31 @@ Example:
 ./client 100 5 127.0.0.1 9000
 ```
 Parameters:
-	• threads: Number of concurrent client threads
-	• rounds: Number of request rounds per client
-	• server_ip: Server IP address
-	• port: Server listening port
-	
+1. threads: Number of concurrent client threads
+2. rounds: Number of request rounds per client
+3. server_ip: Server IP address
+4. port: Server listening port
+
+### Output Example
+```text
+threads=100 rounds=5 ok=100 fail=0
+latency(sum per thread) avg=3.236 ms min=0.748 ms max=6.108 ms
+```
+
+#### Output Explanation
+1. threads: Total number of concurrent clients
+2. rounds: Requests sent per client
+3. ok: Successfully completed client sessions
+4. fail: Failed or interrupted sessions
+5. avg latency: Average latency per client thread
+6. min / max latency: Best and worst observed latency
+
+### Observations
+1. The server successfully handled 100 concurrent clients without failure
+2. No abnormal termination or deadlock was observed
+3. Latency remained within an acceptable range for a turn-based game
+4. IPC statistics confirmed correct packet and connection counting
+
 ## Quick Start
 
 ### 1. 編譯專案 (Build)
