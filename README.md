@@ -186,12 +186,12 @@ Packets:     3421
 
 ## Quick Start
 
-### 1. 編譯專案 (Build)
+### 1. Build
 ```bash
 make
 ```
 
-##### 2. 啟動遊戲 (Start Game) #####
+### 2. Start Game 
 本專案提供文字介面 (CLI) 與圖形介面 (GUI) 兩種模式。
 
 #### A. 文字介面 (CLI Mode) - 預設
