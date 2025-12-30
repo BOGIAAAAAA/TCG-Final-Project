@@ -142,13 +142,13 @@ This design ensures:
 ### Monitored Metrics
 The monitor displays the following runtime information:
 
-#### Total Connections
+#### 1. Total Connections
 Number of client connections accepted by the server
 
-#### Total Packets Processed
+#### 2. Total Packets Processed
 Number of protocol packets handled by the server
 
-#### Server Status
+#### 3. Server Status
 Indicates whether the server is currently running
 
 ### How to Run
