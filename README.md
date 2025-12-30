@@ -79,6 +79,26 @@ The stress test is designed to validate the following aspects:
 7. Client: multi-threaded
 8. Server: multi-process
 
+### How to Run the Stress Test
+1. Start the Server
+```bash
+./server 9000
+```
+
+2. Run the Stress Test Client
+```bash
+./client <threads> <rounds> <server_ip> <port>
+```
+Example:
+```bash
+./client 100 5 127.0.0.1 9000
+```
+Parameters:
+	• threads: Number of concurrent client threads
+	• rounds: Number of request rounds per client
+	• server_ip: Server IP address
+	• port: Server listening port
+	
 ## Quick Start
 
 ### 1. 編譯專案 (Build)
