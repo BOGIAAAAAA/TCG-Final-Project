@@ -18,12 +18,12 @@ Implemented network timeout handling to prevent indefinite blocking during netwo
 *   Added `net_set_timeout` helper in `src/common/net.c`.
 *   Verified by temporarily adding a delay in the server login process.
 
-## TLS 加密通訊 (TLS Security)
+## TLS Security
 
-本專案已全面啟用 TLS 加密通訊，以確保資料傳輸的安全性。
+This project fully implements TLS encryption to ensure secure data transmission.
 
-### 1. 前置需求 (Prerequisites)
-編譯前請確保已安裝 OpenSSL 開發套件：
+### 1. Prerequisites
+Please ensure the OpenSSL development package is installed before compiling:
 ```bash
 sudo apt install libssl-dev
 ```
