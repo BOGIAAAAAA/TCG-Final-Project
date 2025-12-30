@@ -1,0 +1,9 @@
+*.o
+*.a
+client
+server
+client_gui
+bench
+*.key
+*.crt
+.DS_Store
