@@ -117,7 +117,7 @@ latency(sum per thread) avg=3.236 ms min=0.748 ms max=6.108 ms
 4. IPC statistics confirmed correct packet and connection counting
 
 ##  Monitor
-monitor is a runtime monitoring utility designed for the server-side of our high-concurrency Client–Server system. It observes shared server statistics through IPC (shared memory) and provides real-time visibility into server behavior during execution. This tool is mainly used to verify correctness, stability, and concurrency behavior under load.
+Monitor is a runtime monitoring utility designed for the server-side of our high-concurrency Client–Server system. It observes shared server statistics through IPC (shared memory) and provides real-time visibility into server behavior during execution. This tool is mainly used to verify correctness, stability, and concurrency behavior under load.
 
 ### Purpose
 The monitor tool is designed to achieve the following goals:
