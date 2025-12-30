@@ -116,6 +116,74 @@ latency(sum per thread) avg=3.236 ms min=0.748 ms max=6.108 ms
 3. Latency remained within an acceptable range for a turn-based game
 4. IPC statistics confirmed correct packet and connection counting
 
+##  Monitor
+monitor is a runtime monitoring utility designed for the server-side of our high-concurrency Client–Server system. It observes shared server statistics through IPC (shared memory) and provides real-time visibility into server behavior during execution. This tool is mainly used to verify correctness, stability, and concurrency behavior under load.
+
+### Purpose
+The monitor tool is designed to achieve the following goals:
+•	Observe server activity without interfering with execution
+•	Validate correct usage of inter-process communication (IPC)
+•	Provide real-time insight into:
+	•	Active connections
+	•	Total processed packets
+•	Assist debugging during stress testing and demo sessions
+
+### Architecture
+#### IPC Mechanism
+•	The server maintains runtime statistics using POSIX shared memory
+•	All worker processes update shared counters
+•	monitor attaches to the same shared memory region in read-only mode
+
+This design ensures:
+•	Low overhead
+•	No synchronization interference
+•	Safe concurrent access
+
+### Monitored Metrics
+The monitor displays the following runtime information:
+
+#### Total Connections
+Number of client connections accepted by the server
+
+#### Total Packets Processed
+Number of protocol packets handled by the server
+
+#### Server Status
+Indicates whether the server is currently running
+
+### How to Run
+#### 1. Start the Server
+```bash
+./server 9000
+```
+#### 2. Start the Monitor 
+```bash
+./monitor
+```
+The monitor will continuously display updated server statistics.
+
+### Example Output
+```text
+[monitor]
+Connections: 128
+Packets:     3421
+```
+
+### Use Cases
+•	Live demonstration during project presentation
+•	Verifying server behavior during stress testing
+•	Confirming IPC correctness and synchronization
+•	Debugging abnormal connection or packet growth
+
+### Implementation Notes
+•	Implemented in C (POSIX-compliant)
+•	Uses:
+	•	shm_open
+	•	mmap
+	•	Shared memory synchronization primitives
+•	No network sockets are used by the monitor
+•	Can be started or stopped independently of the server
+
 ## Quick Start
 
 ### 1. 編譯專案 (Build)
