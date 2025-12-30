@@ -80,12 +80,12 @@ The stress test is designed to validate the following aspects:
 8. Server: multi-process
 
 ### How to Run the Stress Test
-1. Start the Server
+#### 1. Start the Server
 ```bash
 ./server 9000
 ```
 
-2. Run the Stress Test Client
+#### 2. Run the Stress Test Client
 ```bash
 ./client <threads> <rounds> <server_ip> <port>
 ```
