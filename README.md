@@ -192,10 +192,10 @@ make
 ```
 
 ### 2. Start Game 
-本專案提供文字介面 (CLI) 與圖形介面 (GUI) 兩種模式。
+This project provides two client modes: a Command-Line Interface (CLI) and a Graphical User Interface (GUI).
 
-#### A. 文字介面 (CLI Mode) - 預設
-請在兩個不同的終端機視窗分別執行伺服器與客戶端：
+#### A. Command-Line Interface (CLI Mode) – Default
+Please run the server and client in two separate terminal windows.
 
 **終端機 1 (伺服器Server):**
 ```bash
